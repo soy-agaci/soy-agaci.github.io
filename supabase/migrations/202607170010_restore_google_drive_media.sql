@@ -1,0 +1,93 @@
+begin;
+
+alter table public.media_revisions disable trigger media_revisions_immutable;
+
+with media_map(local_uri, google_uri) as (
+  values
+    ('/aile/fotograf/0007-mustafa-huseyinoglu.jpg', 'https://lh3.googleusercontent.com/d/1Gj0jfMQmLO81bCFG7_ddLhZWgIW2VA37'),
+    ('/aile/fotograf/0026-tarik-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1ReC8tak17CzNOUm4upGeFm4kKS3WSHGu'),
+    ('/aile/fotograf/0037-ahmet-sait-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1x1886KWwFI1oSPNGZgRNsnxRnFqgB_yq'),
+    ('/aile/fotograf/0038-nuri-sait-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1Pw6MGzZ0M3TSVxVy9DHLPz-6q-gxFSl_'),
+    ('/aile/fotograf/0039-harun-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1QnL1McEK3n7Lmirw_DopV1rSNgJhPk72'),
+    ('/aile/fotograf/0052-rahmi-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1t6UMRC-yd4lxQFuD47YFLLf48sBhcm-J'),
+    ('/aile/fotograf/0064-ismail-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1POGkf5W1PtWM0MlgPdsj5Vzgpb52EJjS'),
+    ('/aile/fotograf/0098-irfan-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1VGNGz8yDIGjkiLq69RckASxWlCX1m3sv'),
+    ('/aile/fotograf/0138-mustafa-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1Az5H4dWFavLO94Pid2ES9gyVtZwEqNy8'),
+    ('/aile/fotograf/0140-mehmet-cuneyt-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1Of8UwNsN1w_xJ39pgNg4HlQdYLE13ijt'),
+    ('/aile/fotograf/0142-aydin-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1ygBg5Bcyxap3C4csiiXDxsXQ52S6md3m'),
+    ('/aile/fotograf/0149-onur-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1z8IaPQc7lbSlD-NVsp8gIn1c8FnZksay'),
+    ('/aile/fotograf/0172-resit-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1RHKBfG_z7aisSk5uaCbSJ8ysuMCvVi-f'),
+    ('/aile/fotograf/0173-katibe-akyildiz-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1YHW2udeWk4dpr5ZTNUV9Ez6qH972PNl6'),
+    ('/aile/fotograf/0174-gulname-selcuk-balik.jpg', 'https://lh3.googleusercontent.com/d/1_GDKvU0uEi-D7yonZwe46os3-F33ilo5'),
+    ('/aile/fotograf/0175-mahmut-balik.jpg', 'https://lh3.googleusercontent.com/d/1aGbtxhbkBajS6ZP8QfWAk5xLzS8AkQhc'),
+    ('/aile/fotograf/0176-riza-tevfik-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1e1Nq67-K587tJrd_OeEevSPjoqXp6ivf'),
+    ('/aile/fotograf/0183-sezai-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1e5iVQGQKwo2mHKCloEsQWk2YYCdapt1z'),
+    ('/aile/fotograf/0188-davut-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1ujoy_FV2sw2wnLwShrD5qjVyfQiZ_9an'),
+    ('/aile/fotograf/0189-hatice-agiralioglu-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1J8i06QZxc0w1PKej9ICk8bs5pCqugZcV'),
+    ('/aile/fotograf/0190-ulku-selcuk-hos.jpg', 'https://lh3.googleusercontent.com/d/1l7pBwFupRE4Gy0m8Ki-jhenBDzZk52AM'),
+    ('/aile/fotograf/0191-erdal-hos.jpg', 'https://lh3.googleusercontent.com/d/1JQYWn6UiHWAZWkylSqDMLsAUfhhS_luc'),
+    ('/aile/fotograf/0192-gokcen-hos.jpg', 'https://lh3.googleusercontent.com/d/1gt7Hia7KeHJ_SRjNmR_tm1D4vd9_yBf0'),
+    ('/aile/fotograf/0193-gulru-hos.jpg', 'https://lh3.googleusercontent.com/d/11DHKYVlxzAXuaiZh0NKk30RIBxwe0koq'),
+    ('/aile/fotograf/0194-alisir-engin-hos.jpg', 'https://lh3.googleusercontent.com/d/1LRXvol4h2gAjePxtzyStNTAX1pzE3gwk'),
+    ('/aile/fotograf/0195-ayse-guldehen-hos.jpg', 'https://lh3.googleusercontent.com/d/1h5HDn4fykKJq6qbDFN-fC03vjWK1jkeq'),
+    ('/aile/fotograf/0196-serdar-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1FEehyF1lkRXNY0ekLMxOQ9BjxSQxCQlr'),
+    ('/aile/fotograf/0197-funda-kaynak-selcuk.jpg', 'https://lh3.googleusercontent.com/d/19wr8asBo0FClINHYgySf_ogE6KkgsMUH'),
+    ('/aile/fotograf/0198-feyza-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1bPa8iwvvHn9xhYTSYJvJQ-UIoAy1Xs3W'),
+    ('/aile/fotograf/0199-elif-selcuk-uyar.jpg', 'https://lh3.googleusercontent.com/d/1sJJllm4bUPPQMegd6T5zUaS0zL4JW9dr'),
+    ('/aile/fotograf/0200-ismail-uyar.jpg', 'https://lh3.googleusercontent.com/d/1n9hMkS19PnlFdEUk7E2s3BlRb9OzlRJr'),
+    ('/aile/fotograf/0201-gulnihal-bahar-uyar.jpg', 'https://lh3.googleusercontent.com/d/16NY5lsiH41cDkyqhBsDeobA8TD8zo17E'),
+    ('/aile/fotograf/0202-omer-nail-uyar.jpg', 'https://lh3.googleusercontent.com/d/1TAZQnJ4WAMRmtVXzSyPsDTlz5NVHaRAc'),
+    ('/aile/fotograf/0203-sencer-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1lDMCbFe9V2--P_LD6VJ39BPWEGqX5sN4'),
+    ('/aile/fotograf/0204-hande-boyaci-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1Ouqi77Dd0d_IrJ7OUU1p0_skZjdXlI_2'),
+    ('/aile/fotograf/0205-levent-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1H51ZrkuTWr1xKsDlrJXiS2a5a6kXW3or'),
+    ('/aile/fotograf/0206-semih-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1dpDSvs4W97L4xhcSU-0dIDMKX2fau9Fx'),
+    ('/aile/fotograf/0207-leyla-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1BSSCKGp3AgK7j62yul4OisSl1HIG1lny'),
+    ('/aile/fotograf/0208-hikmet-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1k0OWUrZUK674h0wFi53G4Z7_nA7vrCCq'),
+    ('/aile/fotograf/0210-mustafa-cagri-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1cM7TiChoyWuPpJh-mmt73Q_xV9SJH3AR'),
+    ('/aile/fotograf/0211-leyla-baykal-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1Xo55sA7vs2gAsB2TlJgHopx6DXuuN53-'),
+    ('/aile/fotograf/0515-elif-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1XMNRz4gw9FkItZlhvOTUHDq3Ig5G4Sb-'),
+    ('/aile/fotograf/0213-muzaffer-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1oNN568RAiYE1AUqq9LU7peeK1UIkJwyN'),
+    ('/aile/fotograf/0215-dilek-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1Q4FA2dRCVHi1WyR0p0Mq3urn2kaOkBQV'),
+    ('/aile/fotograf/0218-salih-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1eBSWx4TjhBBLX6Zrd8XtYFvhVMR8GI6Q'),
+    ('/aile/fotograf/0223-hamide-selcuk-kalender.jpg', 'https://lh3.googleusercontent.com/d/1E9LSz3RswNGZqYVav125EbKa-ZwmL7GC'),
+    ('/aile/fotograf/0230-temel-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1B9vTaUUJEpoGWcFSPHHNYxvig4oPiLDb'),
+    ('/aile/fotograf/0231-halil-ibrahim-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1nuLbw7pjdWA-jSrkavHOIob9tOKXz2QR'),
+    ('/aile/fotograf/0237-fadime-selcuk-sirin.jpg', 'https://lh3.googleusercontent.com/d/1ocqG09ocjMS12ATk2QV8Pf6FMDK2PNqn'),
+    ('/aile/fotograf/0262-enver-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1TcksaL9F4aYxvgsm6f1XVCW1TDzCY2VH'),
+    ('/aile/fotograf/0490-osman-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1aXYEAGcfX9-2rgecKrezgYU7TVPj4tcZ'),
+    ('/aile/fotograf/0274-musa-selcuk.jpg', 'https://lh3.googleusercontent.com/d/18LYRFHotlregV7U2QeAkvMcp-4ceIgnl'),
+    ('/aile/fotograf/0333-ibrahim-selcuk.jpg', 'https://lh3.googleusercontent.com/d/171XVgFfEZKq25oV3OJiWaFCxkgGuFpQq'),
+    ('/aile/fotograf/0345-nazim-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1bGOK0aQJJcWV7vTewf7P7d4UNmhG5sVN'),
+    ('/aile/fotograf/0355-salih-abdurrahim-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1ISsWrvb_x5FgS181KKw2sJuVxiLa7Bai'),
+    ('/aile/fotograf/0362-rustem-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1Rb7fzY2J9ctaCq5prsmskYx4uPeQNUdF'),
+    ('/aile/fotograf/0363-hamide-selcuk-basak.jpg', 'https://lh3.googleusercontent.com/d/1yyUO0eDye7ZPAcHZJJgnorfC5HbnCE2e'),
+    ('/aile/fotograf/0383-huseyin-huseko-selcuk.jpg', 'https://lh3.googleusercontent.com/d/19rm_B3xE6hQCc6Tk6cBcJkAtJsYMlcT9'),
+    ('/aile/fotograf/0396-yuksel-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1wzFUEX7eTtn1rmHifpeXlTBaC44XekHr'),
+    ('/aile/fotograf/0398-vedat-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1rY6K5tunu0cytPWqi36H3rXxYu8wQNby'),
+    ('/aile/fotograf/0400-sedat-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1M_nov4GpmHvJh6nJDLyPvNqTKzeS_zcT'),
+    ('/aile/fotograf/0401-ferhat-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1gmpY-5PqU4104RAxy4eJBTI8orphXgmR'),
+    ('/aile/fotograf/0403-necip-naci-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1kAQnEuGyRBXardbScECsaIWzl4ua1itQ'),
+    ('/aile/fotograf/0406-ersan-selcuk.jpg', 'https://lh3.googleusercontent.com/d/103yOqWN8H03CqJwJSYL9mRlBEfhnG4vI'),
+    ('/aile/fotograf/0410-fatma-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1ntBcNGwDa9hSYM7ESQXjmyvdK0EOmgPZ'),
+    ('/aile/fotograf/0412-necati-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1iAwUlJn9kfkzHyFr39B0hRNynaVVkWo9'),
+    ('/aile/fotograf/0415-mustafa-selcuk.jpg', 'https://lh3.googleusercontent.com/d/18g_CuMGarEotYanrYQxAMZVoQKnIj9_g'),
+    ('/aile/fotograf/0417-akif-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1PxZsXhV7iNbixVAfMZjqCwU24uIUOjbk'),
+    ('/aile/fotograf/0418-fatih-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1InFHRPVFohIlNeT-ZGPG0rqhrnQd4H-g'),
+    ('/aile/fotograf/0422-hikmet-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1un713UXtWbZX38gbx2h7f76iEKIQSn8c'),
+    ('/aile/fotograf/0424-ayhan-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1j6GvSN6xc9LaAw_wJu-nUzHrMwJhW7xd'),
+    ('/aile/fotograf/0425-aysegul-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1boC9ZJHKL-0BBVGsX_Kh4UissJhIAyFx'),
+    ('/aile/fotograf/0426-betul-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1AKoVRvChfhtE83VYQKmggNQCHNrWPNbg'),
+    ('/aile/fotograf/0427-hakan-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1tYMw-_9yogJp-e9uX91dEwv54hRka7kG'),
+    ('/aile/fotograf/0429-ceren-selcuk.jpg', 'https://lh3.googleusercontent.com/d/138wjGd7r9_m_Mv5t2GWCRVALVx-tkoAX'),
+    ('/aile/fotograf/0430-ceyda-selcuk.jpg', 'https://lh3.googleusercontent.com/d/15vSOloX5wFB7reWn-J-m1n_wb1h7C2ma'),
+    ('/aile/fotograf/0431-refik-selcuk.jpg', 'https://lh3.googleusercontent.com/d/1cjPGIudrmWl9sh2tUEJE7b-jep1WqfGe')
+)
+update public.media_revisions media
+set legacy_uri = media_map.google_uri
+from media_map
+where media.legacy_uri = media_map.local_uri
+  and media.status = 'approved';
+
+alter table public.media_revisions enable trigger media_revisions_immutable;
+
+commit;

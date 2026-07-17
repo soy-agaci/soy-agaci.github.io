@@ -2,7 +2,7 @@
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-    base: '/aile/',
+    base: '/',
     publicDir: 'public',
     build: {
         outDir: 'dist',
