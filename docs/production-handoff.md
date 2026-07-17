@@ -2,6 +2,199 @@
 
 This runbook describes operator actions. It does not authorize or perform a remote link, push, import, or deployment.
 
+## Safe migration checklist
+
+Use this order. Do not skip ahead, and do not point the public site at hosted
+Supabase until every verification step below passes.
+
+### 1. Freeze and capture the source data
+
+1. Stop making sheet edits except emergency corrections.
+2. Export or download the current approved sheet CSV into ignored local storage:
+
+```bash
+mkdir -p .local
+# Put the approved capture here. Do not commit it.
+.local/selcuk.csv
+```
+
+3. Keep serving photos from their existing Google Drive URLs. The importer
+   stores those URLs; it does not copy photos into Supabase storage.
+4. Record the expected public aggregate counts for this capture:
+
+```text
+people: 520
+unions: 145
+legacy DAG links: 664
+partnerships: 143
+parent links: 750
+life events: 605
+media: 77
+warnings: 0
+```
+
+If the current sheet intentionally changed, update these counts only after
+reviewing the delta.
+
+### 2. Prove the migration locally
+
+From a clean checkout:
+
+```bash
+npm ci
+cp .env.example .env
+npm run supabase:start
+npm run supabase:status
+```
+
+Copy only the local API URL and publishable key into `.env`:
+
+```dotenv
+VITE_SUPABASE_URL=http://127.0.0.1:54321
+VITE_SUPABASE_PUBLISHABLE_KEY=<local-publishable-key>
+VITE_FAMILY_SLUGS=selcuk
+```
+
+Run the full local gate:
+
+```bash
+PRIMARY_CSV=.local/selcuk.csv npm run verify:local
+```
+
+Pass criteria:
+
+- the command exits `0`
+- generated Supabase types are current
+- pgTAP, Vitest, build, security scans, and browser smoke pass
+- import parity matches the recorded counts above
+- no source rows, secrets, screenshots, or tokens are printed or committed
+
+Stop here if this fails.
+
+### 3. Create and verify the hosted Supabase project
+
+Create a new hosted Supabase project. Before applying migrations:
+
+1. Confirm the project has backups/PITR appropriate for production.
+2. Store the project ref, database password, API URL, publishable key, and
+   service-role key in a private secret store.
+3. Never put the service-role key, database password, Google secret, JWT
+   secret, or refresh tokens in `.env`, `VITE_*`, hosting variables, logs, or
+   committed files.
+
+Apply schema from a trusted operator shell:
+
+```bash
+npx supabase link --project-ref <project-ref>
+npx supabase db push --dry-run
+npx supabase db push
+```
+
+Do not use `--include-seed` on the hosted project. `supabase/seed.sql` is
+synthetic local data only.
+
+### 4. Configure Google OAuth before admin bootstrap
+
+In Google Cloud, create an OAuth 2.0 Web application and configure:
+
+- JavaScript origin: your production frontend origin
+- redirect URI: `https://<project-ref>.supabase.co/auth/v1/callback`
+
+In Supabase Dashboard:
+
+- enable Authentication > Providers > Google
+- enter the Google client ID and secret
+- set Site URL to the canonical deployed app URL, including `/aile/`
+- add only required production/preview/local URLs to the redirect allowlist
+
+The first admin must sign into the app once with Google before bootstrap.
+
+### 5. Bootstrap exactly one initial admin
+
+After that Google-backed user exists in Supabase Auth:
+
+```bash
+SUPABASE_URL=<hosted-api-url> \
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
+npm run admin -- bootstrap <admin-email>
+```
+
+This is intentionally one-way. After bootstrap, admins are managed only through
+the in-app invitation/revocation flow.
+
+### 6. Import production family data once
+
+Run the production import only after schema, OAuth, and backup checks pass:
+
+```bash
+ALLOW_REMOTE_SUPABASE=1 \
+SUPABASE_URL=<hosted-api-url> \
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
+npm run import:sheet -- \
+  --file .local/selcuk.csv \
+  --family-slug selcuk \
+  --family-name "Selçuk" \
+  --privacy public
+```
+
+Immediately repeat the exact same command. It must report `"no_op": true`.
+If it inserts again, stop and investigate before deployment.
+
+### 7. Verify hosted data before frontend cutover
+
+Using a local frontend pointed at hosted Supabase, set:
+
+```dotenv
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<publishable-key>
+VITE_FAMILY_SLUGS=selcuk
+```
+
+Then run:
+
+```bash
+npm run build
+npm run dev
+```
+
+Open `http://localhost:5173/aile/?family=selcuk` and verify:
+
+- the Selçuk tree loads without Google Sheet runtime access
+- photos load from Google Drive URLs
+- approved mode hides pending edits
+- pending mode shows pending public proposals
+- reset/share/family controls work
+- URL refresh preserves expanded view and pan position
+- no service-role key or Google secret appears in browser devtools
+
+### 8. Deploy frontend last
+
+Set only these production build variables in the hosting provider:
+
+```dotenv
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<publishable-key>
+VITE_FAMILY_SLUGS=selcuk
+```
+
+Build and deploy `dist/`:
+
+```bash
+npm ci
+npm run build
+```
+
+After deploy, run the production smoke section below. Keep the old sheet-backed
+deployment available until smoke passes.
+
+### 9. Rollback rule
+
+Before frontend cutover, rollback is simple: do not deploy the new frontend.
+After cutover, rollback the frontend to the previous release first. Do not
+manually edit hosted production rows to undo a bad import. Restore into a
+recovery project from backup/PITR, validate it, then perform a controlled
+provider-approved restore or cutover.
+
 ## Prerequisites
 
 - Node.js 22.12 or newer and npm.

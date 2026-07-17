@@ -93,8 +93,10 @@ npm run import:sheet -- --file .local/selcuk.csv --family-slug selcuk --family-n
 
 Set `PRIMARY_CSV=.local/selcuk.csv` to use the ignored private capture for the required aggregate-only production parity test.
 
-See [Production handoff](docs/production-handoff.md) for hosted Supabase, Google OAuth,
-admin provisioning, import, deployment, backup, recovery, security, and smoke procedures.
+For the safe hosted migration sequence, follow
+[Production handoff: Safe migration checklist](docs/production-handoff.md#safe-migration-checklist).
+It covers source freeze, local proof, hosted Supabase, Google OAuth, admin
+bootstrap, production import, frontend cutover, smoke, and rollback points.
 
 ### Starting a family from an existing person
 
