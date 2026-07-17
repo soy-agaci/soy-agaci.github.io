@@ -3,4 +3,11 @@ dist
 .vite
 public
 scripts
+!scripts/
+scripts/*
+!scripts/test-step7-local.sh
+!scripts/browser-step10.mjs
 *.zip
+.env*
+!.env.example
+.local/

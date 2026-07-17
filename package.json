@@ -7,7 +7,16 @@
     "test": "vitest",
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:status": "supabase status",
+    "supabase:reset": "supabase db reset",
+    "supabase:types": "supabase gen types typescript --local",
+    "verify:local": "bash scripts/test-step7-local.sh",
+    "test:local-step7": "npm run verify:local",
+    "import:sheet": "tsx tools/import-sheet.ts",
+    "admin": "tsx tools/admin.ts"
   },
   "repository": {
     "type": "git",
@@ -22,6 +31,7 @@
   },
   "homepage": "https://github.com/camakoglu/aile#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
     "d3": "^7.9.0",
     "zod": "^3.25.76"
   },
@@ -29,8 +39,14 @@
     "@types/d3": "^7.4.3",
     "@types/node": "^24.10.1",
     "jsdom": "^27.2.0",
+    "playwright-core": "^1.61.1",
+    "supabase": "^2.109.1",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.4",
     "vitest": "^4.0.14"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

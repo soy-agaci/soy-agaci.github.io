@@ -5,7 +5,6 @@
     <meta charset="utf-8" />
     <title>Selçuk Ailesi</title>
     <link rel="icon" type="image/ico" href="/favicon.ico">
-    <link rel="stylesheet" href="/css/familienbaum.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -102,20 +101,32 @@
     </div>
 
     <!-- Global Patrilineal Toggle Button -->
-    <div style="position: fixed; top: 24px; right: 24px; z-index: 1000; display: flex; gap: 12px;">
-        <button id="reset-view-btn" class="glass-btn">
-            <span style="font-size: 1.2em;">🔄</span>
-            <span>Sıfırla</span>
+    <div id="tree-toolbar" style="position: fixed; top: 24px; right: 24px; z-index: 1000; display: flex; gap: 12px;">
+        <details id="family-picker" class="toolbar-menu">
+            <summary id="family-picker-label" class="glass-btn" title="Aileler">Aile</summary>
+            <fieldset id="family-options"><legend>Aileler</legend></fieldset>
+        </details>
+        <button id="revision-toggle" class="revision-toggle" type="button" aria-pressed="false">
+            <span title="Onaylı">✓</span>
+            <span title="Bekleyen">⏳</span>
         </button>
-        <button id="share-btn" class="glass-btn">
-            <span style="font-size: 1.2em;">📤</span>
-            <span>Paylaş</span>
+        <button id="reset-view-btn" class="glass-btn" title="Sıfırla" aria-label="Sıfırla">
+            <span style="font-size: 1.2em;">↺</span>
         </button>
-        <button id="patrilineal-global-toggle" class="glass-btn">
-            <span id="toggle-icon" style="font-size: 1.2em;">👨‍👦</span>
-            <span id="toggle-text">Sadece Erkek Soyu</span>
+        <button id="share-btn" class="glass-btn" title="Paylaş" aria-label="Paylaş">
+            <span style="font-size: 1.2em;">🔗</span>
+        </button>
+        <button id="admin-btn" type="button" class="glass-btn" title="Yönetim">⚙️</button>
+        <button id="patrilineal-global-toggle" class="glass-btn icon-state-btn" type="button" aria-pressed="false" title="Erkek soyu">
+            <span style="font-size: 1.2em;">👔</span>
         </button>
     </div>
+
+    <section id="proposal-panel" aria-label="Bekleyen değişiklikler" hidden>
+        <div class="proposal-header">Bekleyen değişiklikler</div>
+        <div id="proposal-status" role="status"></div>
+        <div id="proposal-list"></div>
+    </section>
 
     <!-- Tree Container (SVG goes here) -->
     <div id="tree-container" style="width:100%; height:100vh;"></div>
@@ -150,13 +161,19 @@
             </div>
 
 
-            <!-- Meta -->
-            <div class="sidebar-section">
-                <button id="btn-open-sheet" class="action-btn btn-secondary">Google Tablosunu
-                    Aç</button>
-            </div>
+
         </div>
     </aside>
+
+    <dialog id="admin-dialog" aria-labelledby="admin-title">
+        <div class="sidebar-header">
+            <h2 id="admin-title">Yönetici girişi</h2>
+            <button class="close-btn" type="button" title="Kapat" aria-label="Kapat">✕</button>
+        </div>
+        <div id="admin-status" role="status" aria-live="polite"></div>
+        <div id="admin-content"></div>
+        <div id="admin-actions"></div>
+    </dialog>
 
     <!-- CROP MODAL -->
     <div id="crop-modal">

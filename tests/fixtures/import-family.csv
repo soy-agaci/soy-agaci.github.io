@@ -1,0 +1,9 @@
+Gen,Name,Surname,Father,Mother,BirthDate,BirthPlace,DeathDate,Image,Marriage,Gender,Note,ID
+1,Root,Example,,,c. 1900,Old Town,,legacy/root.jpg,c. 1920,E,root note,1
+E,Partner,Example,,,1901-02-03,,,https://example.test/partner.jpg,c. 1920,K,,2
+2,Child,Example,Root,Partner,1925,,,legacy/child.jpg,,E,,3
+E,Child Partner,Example,,,,,before 2000,,,K,,4
+3,Grandchild One,Example,Child,Child Partner,,,,,,E,,5
+3,Grandchild Two,Example,Child,Child Partner,,,,,,K,,6
+2,Solo Parent,Example,Root,Partner,,,,,,K,,7
+3,Solo Child,Example,,Solo Parent,,,,,,U,,8

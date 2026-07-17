@@ -311,7 +311,7 @@ export class Familienbaum {
         }
     }
 
-    draw(recenter = true, current_node_id = this.data.start) {
+    draw(recenter = true, current_node_id = this.data.start, animate = true) {
         // Ensure current node and its path to parents are visible
         // This prevents the node from disappearing if intermediate unions were accidentally hidden
         try {
@@ -434,9 +434,13 @@ export class Familienbaum {
             localStorage.setItem('soyagaci_last_node', current_node.data);
         } catch (e) { /* ignore */ }
 
+        const previousRendererDuration = this.renderer.transition_milliseconds;
+        this.renderer.transition_milliseconds = animate ? previousRendererDuration : 0;
+
         // Draw nodes and links via Renderer
         this.renderer.draw_nodes(this.dag.nodes(), current_node);
         this.renderer.draw_links(this.dag.links(), current_node);
+        this.renderer.transition_milliseconds = previousRendererDuration;
 
         // Recenter the entire DAG to window
         if (recenter) {
@@ -444,13 +448,14 @@ export class Familienbaum {
             const ty = current_node.added_data.x0! - current_node.x;
 
             if (!isNaN(tx) && !isNaN(ty)) {
-                this.svg.transition()
-                    .duration(this.transition_milliseconds)
-                    .call(
-                        this.zoom.transform,
-                        d3.zoomTransform(this.g.node()!)
-                            .translate(tx, ty),
-                    );
+                const transform = d3.zoomTransform(this.g.node()!).translate(tx, ty);
+                if (animate) {
+                    this.svg.transition()
+                        .duration(this.transition_milliseconds)
+                        .call(this.zoom.transform, transform);
+                } else {
+                    this.svg.call(this.zoom.transform, transform);
+                }
             }
         }
         // Store current node positions for next transition

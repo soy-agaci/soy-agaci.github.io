@@ -1,7 +1,7 @@
 import * as d3 from 'd3';
 import { D3Node } from '../../types/types';
-import { is_member } from './dagWithFamilyData';
-import { get_node_size, get_css_class, add_images } from './NodeHelpers';
+import { get_name, is_member } from './dagWithFamilyData';
+import { get_node_size, get_css_class, add_images, refresh_images } from './NodeHelpers';
 import { set_multiline } from './LabelHelpers';
 import { LAYOUT_CONSTANTS } from '../../constants/layout';
 
@@ -58,7 +58,11 @@ export class TreeRenderer {
 
         // Add a group that will contain the circle and the text
         let circle_group = node_enter_group.append("g")
-            .attr("cursor", "pointer")
+            .attr("class", "node-content")
+            .attr("cursor", node => is_member(node) ? "pointer" : null)
+            .attr("role", node => is_member(node) ? "button" : null)
+            .attr("tabindex", node => is_member(node) ? 0 : null)
+            .attr("aria-label", node => is_member(node) ? `Kişiyi aç: ${get_name(node)}` : null)
             .on("click", (event, node) => {
                 if (event.defaultPrevented) return;
                 
@@ -84,6 +88,12 @@ export class TreeRenderer {
                 }
                 
                 that.onNodeDblClick(node);
+            })
+            .on("keydown", (event, node) => {
+                if (!is_member(node) || event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
+                event.preventDefault();
+                event.stopPropagation();
+                that.onNodeClick(node, event);
             });
 
         // Add a circle as SVG object
@@ -95,9 +105,22 @@ export class TreeRenderer {
         add_images(circle_group);
 
         // Add editing functionality (Pen Sign)
-        node_enter_group.append("g")
+        node_enter_group.filter(is_member).append("g")
+            .attr("class", "edit-control")
             .attr("cursor", "pointer")
-            .on("click", (_event, node) => that.onEditClick(node))
+            .attr("role", "button")
+            .attr("tabindex", 0)
+            .attr("aria-label", "Kişiyi düzenle")
+            .attr("data-node-id", node => node.data)
+            .on("click", (event, node) => {
+                (event.currentTarget as SVGGElement).focus();
+                that.onEditClick(node);
+            })
+            .on("keydown", (event, node) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                that.onEditClick(node);
+            })
             .append("text")
             .attr("cursor", "pointer")
             .attr("class", "plus-label")
@@ -111,20 +134,36 @@ export class TreeRenderer {
         // The nodes to be updated
         let node_update = node_enter_group.merge(nodes_selected);
 
+        node_update.each(function (node) {
+            const group = d3.select<SVGGElement, D3Node>(this);
+            set_multiline(group, node, true);
+            refresh_images(group.select<SVGGElement>('g.node-content'));
+        });
+        node_update.select("g.node-content")
+            .attr("aria-label", node => is_member(node) ? `Kişiyi aç: ${get_name(node)}` : null);
+
         // Define the transition
-        node_update.transition()
-            .duration(this.transition_milliseconds)
-            .attr("transform", node => "translate(" + node.y + "," + node.x + ")");
+        if (this.transition_milliseconds > 0) {
+            node_update.transition()
+                .duration(this.transition_milliseconds)
+                .attr("transform", node => "translate(" + node.y + "," + node.x + ")");
+        } else {
+            node_update.attr("transform", node => "translate(" + node.y + "," + node.x + ")");
+        }
 
         // Update highlighted status
         node_update.select("circle").attr("class", get_css_class);
 
         // Remove any node that becomes invisible
-        let node_exit = nodes_selected.exit()
-            .transition()
-            .duration(this.transition_milliseconds / 5)
-            .attr("visible", "false")
-            .remove();
+        let node_exit = nodes_selected.exit();
+        if (this.transition_milliseconds > 0) {
+            node_exit = node_exit.transition()
+                .duration(this.transition_milliseconds / 5)
+                .attr("visible", "false")
+                .remove() as any;
+        } else {
+            node_exit.remove();
+        }
 
         // Fade labels of nodes being removed
         node_exit.select("text").style("fill-opacity", 1e-6);
@@ -148,14 +187,21 @@ export class TreeRenderer {
 
         let link_update = link_enter.merge(link as any);
 
-        link_update.transition()
-            .duration(this.transition_milliseconds)
-            .attr("d", (link: any) => get_curved_edge(link.source, link.target));
+        if (this.transition_milliseconds > 0) {
+            link_update.transition()
+                .duration(this.transition_milliseconds)
+                .attr("d", (link: any) => get_curved_edge(link.source, link.target));
+        } else {
+            link_update.attr("d", (link: any) => get_curved_edge(link.source, link.target));
+        }
 
-        link.exit()
-            .transition()
-            .duration(this.transition_milliseconds / 5)
-            .style("stroke-opacity", 1e-6)
-            .remove();
+        if (this.transition_milliseconds > 0) {
+            link.exit().transition()
+                .duration(this.transition_milliseconds / 5)
+                .style("stroke-opacity", 1e-6)
+                .remove();
+        } else {
+            link.exit().remove();
+        }
     }
 }

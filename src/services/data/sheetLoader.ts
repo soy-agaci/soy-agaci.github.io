@@ -76,7 +76,13 @@ export function getHighestId(): number {
     return highestId;
 }
 
-export function processSheetData(rows: string[][]): FamilyData {
+export function processSheetData(
+    rows: string[][],
+    options: {
+        writeBackGeneratedIds?: boolean;
+        onWarning?: (message: string, detail?: unknown) => void;
+    } = {}
+): FamilyData {
     const members: { [key: string]: Member } = {};
     const links: Array<[string, string]> = [];
     const unions: { [key: string]: string } = {};
@@ -87,6 +93,7 @@ export function processSheetData(rows: string[][]): FamilyData {
     const spouseMap: { [key: number]: string | null } = {};
     const spouseNameMap: { [key: number]: { [key: string]: string } } = {};
     const seenIds = new Set<number>();
+    const warn = options.onWarning ?? console.warn;
 
     // Reset highest ID
     highestId = 0;
@@ -132,8 +139,8 @@ export function processSheetData(rows: string[][]): FamilyData {
             if (seenIds.has(parsedId)) {
                 // Collision detected! Generate new ID
                 numericId = ++highestId;
-                console.warn(`Row ${index + 2}: ID Collision! ID ${parsedId} already seen. Assigning new ID ${numericId}`);
-                writeAssignedId(index + 2, numericId);
+                warn(`Row ${index + 2}: duplicate ID; assigned a generated ID`);
+                if (options.writeBackGeneratedIds !== false) writeAssignedId(index + 2, numericId);
             } else {
                 // ID is valid and new
                 numericId = parsedId;
@@ -144,10 +151,10 @@ export function processSheetData(rows: string[][]): FamilyData {
         } else {
             // No ID in sheet, generate one
             numericId = ++highestId;
-            console.warn(`Row ${index + 2}: No ID found, assigning ID ${numericId}`);
+            warn(`Row ${index + 2}: missing ID; assigned a generated ID`);
             
             // Attempt to write the assigned ID back to the sheet
-            writeAssignedId(index + 2, numericId);
+            if (options.writeBackGeneratedIds !== false) writeAssignedId(index + 2, numericId);
         }
 
         // Mark ID as seen to prevent future collisions (if we just generated it, it's definitely new)
@@ -184,7 +191,7 @@ export function processSheetData(rows: string[][]): FamilyData {
         const result = MemberSchema.safeParse(rawMember);
 
         if (!result.success) {
-            console.warn(`Row ${index + 2}: Validation failed`, result.error.format());
+            warn(`Row ${index + 2}: validation failed`, result.error.format());
             // We can choose to skip or use a fallback. For now, we'll try to use what we have but log it.
             // In a strict mode, we might want to skip.
         }
@@ -199,7 +206,7 @@ export function processSheetData(rows: string[][]): FamilyData {
 
         if (genType === "E") {
             if (!lastRegularMember) {
-                console.warn("Row " + (index + 2) + ": Spouse 'E' found but no partner exists above.");
+                warn(`Row ${index + 2}: spouse row has no preceding partner`);
                 return;
             }
             const partnerID = lastRegularMember;

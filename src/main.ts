@@ -1,16 +1,23 @@
 import * as d3 from 'd3';
-import { loadFromGoogleSheet } from './services/data/sheetLoader';
+import './styles.css';
+import { familyGraphToFamilyData, proposalFrame, selectedFamilySlugs } from './services/data/familyGraphAdapter';
+import { uniqueSearchEntries } from './services/data/searchIndex';
+import {
+    getFamilyGraphBySlugs,
+    listPublicFamilies,
+    type FamilyGraph,
+    type PublicFamily,
+} from './services/data/familyRepository';
+import { LatestOnly } from './services/data/latestOnly';
 import { Familienbaum } from './components/Tree/Familienbaum';
-import { initEditor } from './ui/editor/index';
+import { closeEditorSidebar, initEditor } from './ui/editor/index';
 import { initDarkMode } from './utils/darkMode';
 import { FamilyData } from './types/types';
 import { filterPatrilineal } from './utils/patrilinealFilter';
-import { buildIdMaps, decodeState, updateURL, shareCurrentState } from './services/state/urlState';
+import { buildIdMaps, decodeState, updateDataQuery, updateURL, shareCurrentState } from './services/state/urlState';
 import { store } from './services/state/store';
 import { get_name, is_member } from './components/Tree/dagWithFamilyData';
-
-// Constants
-const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTzo66Bb8-z3QdqtNGZ9uhQJZJxePifl6nJwvtlot-3JtKp4YKYQdqJNFDY89lqHoMRdlKZmjWzh2OA/pub?output=csv";
+import { initAdminReview } from './ui/admin';
 
 // Initialize Dark Mode
 initDarkMode();
@@ -27,6 +34,14 @@ function normalizeString(str: string): string {
         .replace(/î/g, 'i')
         .replace(/û/g, 'u')
         .replace(/[^a-z0-9]/g, '');
+}
+
+function displayFamily(family: PublicFamily): PublicFamily {
+    return family.slug === 'selcuk' ? { ...family, name: 'Selçuk' } : family;
+}
+
+function selectableFamilies(families: PublicFamily[]): PublicFamily[] {
+    return families.filter(family => !family.slug.startsWith('demo-')).map(displayFamily);
 }
 
 function triggerCirkinMode(familienbaum: Familienbaum) {
@@ -186,12 +201,8 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
     if (!input || !dropdownEl) return;
     const dropdown = dropdownEl as HTMLElement;
 
-    // Build search entries: { display, normalized, id }
-    const searchEntries: { display: string; normalized: string; id: string }[] = [];
     const nodes = familienbaum.dag_all.nodes().filter(n => is_member(n));
-    const seenDisplays = new Set<string>();
-
-    nodes.forEach(n => {
+    const searchEntries = uniqueSearchEntries(nodes.map(n => {
         const name = get_name(n);
         const bdate = (n.added_data.input as any).birth_date;
         let extra = "";
@@ -207,24 +218,8 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
             }
         } catch(e) {}
 
-        let displayValue = `${name}${extra}`;
-
-        // Handle duplicates
-        if (seenDisplays.has(displayValue)) {
-            let counter = 2;
-            while (seenDisplays.has(`${displayValue} (${counter})`)) {
-                counter++;
-            }
-            displayValue = `${displayValue} (${counter})`;
-        }
-        seenDisplays.add(displayValue);
-
-        searchEntries.push({
-            display: displayValue,
-            normalized: normalizeString(displayValue),
-            id: n.data
-        });
-    });
+        return { display: `${name}${extra}`, id: n.data };
+    }), normalizeString);
 
     let selectedIndex = -1;
 
@@ -238,6 +233,8 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
         matches.slice(0, 20).forEach((entry, idx) => {
             const div = document.createElement('div');
             div.textContent = entry.display;
+            div.dataset.nodeId = entry.id;
+            div.setAttribute('role', 'option');
             div.style.cssText = 'padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee;';
             div.onmouseenter = () => {
                 selectedIndex = idx;
@@ -289,6 +286,15 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
 
         // Filter by normalized partial match
         const matches = searchEntries.filter(e => e.normalized.includes(normalizedVal));
+        matches.sort((a, b) => {
+            const aName = a.display.split(/ \(|- Baba:/)[0].trim();
+            const bName = b.display.split(/ \(|- Baba:/)[0].trim();
+            const aNameMatches = normalizeString(aName).includes(normalizedVal);
+            const bNameMatches = normalizeString(bName).includes(normalizedVal);
+            if (aNameMatches && !bNameMatches) return -1;
+            if (!aNameMatches && bNameMatches) return 1;
+            return 0;
+        });
         showDropdown(matches);
     };
 
@@ -332,37 +338,53 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
 
 // Main initialization
 async function init() {
-    let inputData: FamilyData | null = null;
+    const treeContainer = document.getElementById('tree-container')!;
+    const showLoadState = (message: string, error = false) => {
+        const status = document.createElement('div');
+        status.setAttribute('role', error ? 'alert' : 'status');
+        status.textContent = message;
+        status.style.cssText = 'display:grid;place-items:center;height:100%;padding:2rem;text-align:center;font:500 1rem Inter,sans-serif;color:#475569';
+        treeContainer.replaceChildren(status);
+    };
+    showLoadState('Loading family tree...');
 
     // Check if we're doing a reset (skip localStorage)
     const urlParams = new URLSearchParams(window.location.search);
-    const isReset = urlParams.has('reset');
+    const isReset = urlParams.has('reset') || sessionStorage.getItem('soyagaci_reset_requested') === '1';
 
     if (isReset) {
+        sessionStorage.removeItem('soyagaci_reset_requested');
         console.log('Reset mode: clearing localStorage and fetching fresh data');
-        localStorage.clear();
-    }
-
-    try {
-        inputData = await loadFromGoogleSheet(GOOGLE_SHEET_CSV_URL);
-        localStorage.setItem('soyagaci_cached_data', JSON.stringify(inputData));
-        console.log('Data loaded from Google Sheets');
-    } catch (e) {
-        // Only try cache if NOT in reset mode
-        if (!isReset) {
-            console.warn("Network failed, trying cache...", e);
-            const cached = localStorage.getItem('soyagaci_cached_data');
-            if (cached) {
-                inputData = JSON.parse(cached);
-                console.log('Loading state from localStorage');
-            }
-        } else {
-            console.error("Reset mode: network failed and cannot use cache", e);
+        for (const key of ['soyagaci_last_node', 'soyagaci_visible_nodes', 'soyagaci_view_transform', 'soyagaci_patrilineal_mode']) {
+            localStorage.removeItem(key);
         }
+        urlParams.delete('reset');
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('reset');
+        history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
     }
 
-    if (!inputData) {
-        alert("Could not load data.");
+    let inputData: FamilyData;
+    let graph: FamilyGraph;
+    let publicFamilies: PublicFamily[] = [];
+    let familySlugs = selectedFamilySlugs(window.location.search, import.meta.env.VITE_FAMILY_SLUGS);
+    let includePending = urlParams.get('view') === 'pending';
+    let proposalId = includePending ? urlParams.get('proposal') ?? undefined : undefined;
+    const latestLoad = new LatestOnly();
+    try {
+        publicFamilies = await listPublicFamilies();
+        const families = selectableFamilies(publicFamilies);
+        familySlugs = familySlugs.filter(slug => families.some(family => family.slug === slug));
+        if (!familySlugs.length && families.length) familySlugs = [families[0].slug];
+        graph = await getFamilyGraphBySlugs(familySlugs, includePending);
+        if (proposalId && !graph.submissions.some(submission => submission.id === proposalId)) proposalId = undefined;
+        inputData = familyGraphToFamilyData(graph, proposalId);
+        if (!Object.keys(inputData.members).length) throw new Error('The selected families contain no visible people.');
+        updateDataQuery(familySlugs, includePending, proposalId);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown data loading error.';
+        console.error('Failed to load family tree:', error);
+        showLoadState(`Could not load family tree: ${message}`, true);
         return;
     }
 
@@ -384,7 +406,7 @@ async function init() {
         lastNodeId = urlState.currentNode;
         savedVisibleNodes = urlState.visibleNodes;
         savedTransform = urlState.transform;
-    } else {
+    } else if (!isReset) {
         console.log('Loading state from localStorage');
         // patrilinealMode already set in store constructor from localStorage
         lastNodeId = localStorage.getItem('soyagaci_last_node');
@@ -402,6 +424,11 @@ async function init() {
                 savedTransform = JSON.parse(savedTransformJson);
             } catch (e) { console.warn("Failed to restore transform", e); }
         }
+    } else {
+        store.setPatrilineal(false);
+        store.setVisibleNodes(new Set());
+        store.getState().selectedNodeId = null;
+        store.getState().transform = null;
     }
 
 
@@ -425,8 +452,7 @@ async function init() {
 
     // UI Elements
     const globalToggle = document.getElementById('patrilineal-global-toggle');
-    const toggleIcon = document.getElementById('toggle-icon');
-    const toggleText = document.getElementById('toggle-text');
+    treeContainer.replaceChildren();
     const svg = d3.select("#tree-container").append("svg").attr("id", "tree-svg");
 
     // Dimensions
@@ -440,6 +466,131 @@ async function init() {
 
     let familienbaum: Familienbaum;
 
+    const proposalPanel = document.getElementById('proposal-panel')!;
+    const proposalList = document.getElementById('proposal-list')!;
+    const proposalStatus = document.getElementById('proposal-status')!;
+    const revisionToggle = document.getElementById('revision-toggle') as HTMLButtonElement;
+
+    const renderProposalPanel = () => {
+        proposalPanel.hidden = !includePending || graph.submissions.length === 0;
+        proposalList.replaceChildren();
+        for (const submission of graph.submissions) {
+            const familyProposal = graph.family_creation_proposals.find(item => item.submission_id === submission.id);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'proposal-item';
+            button.setAttribute('aria-pressed', String(submission.id === proposalId));
+            button.textContent = familyProposal
+                ? `${familyProposal.name} (${familyProposal.slug})`
+                : submission.status === 'pending' ? 'Beklemede' : submission.status === 'approved' ? 'Onaylandı' : 'Reddedildi';
+            if (familyProposal) {
+                const context = document.createElement('small');
+                context.textContent = `${familyProposal.source_family_name} · Kök: ${familyProposal.root_display_name}`;
+                button.append(context);
+            }
+            const date = document.createElement('small');
+            date.textContent = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })
+                .format(new Date(submission.created_at));
+            button.append(date);
+            button.onclick = () => {
+                proposalId = submission.id === proposalId ? undefined : submission.id;
+                updateDataQuery(familySlugs, includePending, proposalId, 'push');
+                applyGraph(true);
+            };
+            proposalList.append(button);
+        }
+        proposalStatus.textContent = proposalId ? 'Seçili değişiklik ağa uygulanıyor.' : 'Onaylı ağa uygulanacak bir değişiklik seçin.';
+        revisionToggle.setAttribute('aria-pressed', String(includePending));
+    };
+
+    const applyGraph = (frameProposal = false) => {
+        const nextData = familyGraphToFamilyData(graph, proposalId);
+        const frame = frameProposal && proposalId ? proposalFrame(graph, nextData, proposalId) : undefined;
+        const selectedId = frame?.focusId ?? store.getState().selectedNodeId;
+        if (selectedId && nextData.members[selectedId]) nextData.start = selectedId;
+        if (frame) {
+            savedVisibleNodes = frame.visibleNodes;
+            savedTransform = null;
+        }
+        store.setData(nextData);
+        if (frame) store.setSelectedNode(frame.focusId);
+        buildIdMaps(nextData);
+        renderTree();
+        renderProposalPanel();
+    };
+
+    const reloadData = async (frameProposal = false, normalizeUrl = true) => {
+        proposalStatus.textContent = 'Yükleniyor…';
+        try {
+            await latestLoad.run(
+                () => getFamilyGraphBySlugs(familySlugs, includePending),
+                next => {
+                    graph = next;
+                    if (proposalId && !graph.submissions.some(submission => submission.id === proposalId)) proposalId = undefined;
+                    if (normalizeUrl) updateDataQuery(familySlugs, includePending, proposalId);
+                    applyGraph(frameProposal);
+                },
+            );
+        } catch (error) {
+            proposalPanel.hidden = false;
+            proposalStatus.textContent = error instanceof Error ? error.message : 'Aile verisi yüklenemedi.';
+        }
+    };
+
+    const familyOptions = document.getElementById('family-options') as HTMLFieldSetElement;
+    const familyPickerLabel = document.getElementById('family-picker-label')!;
+    const updateFamilyLabel = () => {
+        const selectedNames = selectableFamilies(publicFamilies)
+            .filter(family => familySlugs.includes(family.slug))
+            .map(family => family.name);
+        familyPickerLabel.textContent = selectedNames.length === 1 ? selectedNames[0] : `${selectedNames.length} aile`;
+    };
+    const renderFamilyOptions = () => {
+        familyOptions.replaceChildren();
+        const families = selectableFamilies(publicFamilies);
+        familySlugs = familySlugs.filter(slug => families.some(family => family.slug === slug));
+        if (!familySlugs.length && families.length) familySlugs = [families[0].slug];
+        const legend = document.createElement('legend');
+        legend.textContent = 'Aileler';
+        familyOptions.append(legend);
+        for (const family of families) {
+            const label = document.createElement('label');
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = family.slug;
+            input.checked = familySlugs.includes(family.slug);
+            input.onchange = () => {
+                const selected = Array.from(familyOptions.querySelectorAll<HTMLInputElement>('input:checked'))
+                    .map(item => item.value);
+                if (!selected.length) {
+                    input.checked = true;
+                    return;
+                }
+                familySlugs = selected;
+                proposalId = undefined;
+                updateFamilyLabel();
+                updateDataQuery(familySlugs, includePending, undefined, 'push');
+                void reloadData(false, false);
+            };
+            label.append(input, document.createTextNode(family.name));
+            familyOptions.append(label);
+        }
+        updateFamilyLabel();
+    };
+    renderFamilyOptions();
+    initAdminReview(async () => {
+        publicFamilies = await listPublicFamilies();
+        renderFamilyOptions();
+        await reloadData(false, false);
+    });
+
+    revisionToggle.onclick = () => {
+        includePending = !includePending;
+        proposalId = undefined;
+        updateDataQuery(familySlugs, includePending, undefined, 'push');
+        void reloadData(false, false);
+    };
+
     // State for preserving Full Tree visibility
     let fullTreeVisibleNodes: Set<string> | null = null;
 
@@ -452,18 +603,8 @@ async function init() {
 
         if (store.getState().isPatrilineal) {
             displayData = filterPatrilineal(currentFullData);
-            if (globalToggle && toggleIcon && toggleText) {
-                globalToggle.style.background = 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)';
-                toggleIcon.textContent = '👨‍👦‍👦';
-                toggleText.textContent = 'Tüm Soy Ağacı';
-            }
-        } else {
-            if (globalToggle && toggleIcon && toggleText) {
-                globalToggle.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                toggleIcon.textContent = '👨‍👦';
-                toggleText.textContent = 'Sadece Erkek Soyu';
-            }
         }
+        globalToggle?.setAttribute('aria-pressed', String(store.getState().isPatrilineal));
 
         renderTreeInternal(displayData);
     }
@@ -521,7 +662,16 @@ async function init() {
         };
 
         // Initialize Editor (Sidebar, etc.)
-        initEditor(familienbaum);
+        initEditor(familienbaum, {
+            getGraph: () => graph,
+            getFamilies: () => selectableFamilies(publicFamilies).filter(family => familySlugs.includes(family.slug)),
+            onSubmitted: async result => {
+                includePending = true;
+                proposalId = result.submission_id;
+                updateDataQuery(familySlugs, true, proposalId, 'push');
+                await reloadData(true, false);
+            },
+        });
 
         // Restore state if available FROM URL (explicit user action)
         // Don't restore from localStorage here - that's already handled at init time
@@ -530,7 +680,7 @@ async function init() {
 
         // Only restore visibility if we have URL state (savedVisibleNodes was set from URL)
         // or if we have a significantly large saved state (indicating user had expanded the tree)
-        const hasExplicitState = savedVisibleNodes && savedVisibleNodes.size > 3; // More than just root + couple nodes
+        const hasExplicitState = savedVisibleNodes && (Boolean(urlState) || savedVisibleNodes.size > 3); // More than just root + couple nodes or from shared URL
 
         if (hasExplicitState && familienbaum.dag_all) {
             // Validate that saved nodes actually exist in current DAG
@@ -654,7 +804,7 @@ async function init() {
             }
         }
 
-        familienbaum.draw(shouldRecenter);
+        familienbaum.draw(shouldRecenter, displayData.start, false);
 
         // Restore transform if available and valid
         if (state.transform && !shouldRecenter) {
@@ -670,6 +820,7 @@ async function init() {
     // Initial Render with slight delay to ensure DOM is ready
     setTimeout(() => {
         renderTree();
+        renderProposalPanel();
     }, 50);
 
     // Event Listeners
@@ -717,8 +868,11 @@ async function init() {
     const resetViewBtn = document.getElementById('reset-view-btn');
     if (resetViewBtn) {
         resetViewBtn.addEventListener('click', () => {
-            // Reload with reset parameter - localStorage will be cleared on next page load
-            window.location.href = `${window.location.pathname}?reset=1`;
+            const url = new URL(window.location.href);
+            url.searchParams.delete('reset');
+            url.hash = '';
+            sessionStorage.setItem('soyagaci_reset_requested', '1');
+            window.location.href = url.pathname + url.search;
         });
     }
 
@@ -727,13 +881,25 @@ async function init() {
 
     const closeSidebarBtn = document.querySelector('.close-btn');
     if (closeSidebarBtn) {
-        closeSidebarBtn.addEventListener('click', () => {
-            const sidebar = document.getElementById('family-sidebar');
-            if (sidebar) sidebar.classList.remove('active');
-        });
+        closeSidebarBtn.addEventListener('click', closeEditorSidebar);
     }
 
-    window.addEventListener('popstate', () => {
+    window.addEventListener('popstate', async () => {
+        const query = new URLSearchParams(window.location.search);
+        const nextFamilies = selectedFamilySlugs(window.location.search, import.meta.env.VITE_FAMILY_SLUGS);
+        const nextPending = query.get('view') === 'pending';
+        const nextProposal = nextPending ? query.get('proposal') ?? undefined : undefined;
+        const queryChanged = nextPending !== includePending || nextProposal !== proposalId
+            || nextFamilies.join('\0') !== familySlugs.join('\0');
+        if (queryChanged) {
+            const families = selectableFamilies(publicFamilies);
+            familySlugs = nextFamilies.filter(slug => families.some(family => family.slug === slug));
+            if (!familySlugs.length && families.length) familySlugs = [families[0].slug];
+            includePending = nextPending;
+            proposalId = nextProposal;
+            renderFamilyOptions();
+            await reloadData(Boolean(proposalId), false);
+        }
         const urlState = decodeState();
         if (urlState) {
             // 1. Restore Patrilineal Mode if changed
@@ -803,7 +969,15 @@ async function init() {
         }
     });
 
-    document.addEventListener('keydown', (e) => { if (e.key === 'Shift') document.body.classList.add('show-plus'); });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Shift') document.body.classList.add('show-plus');
+        if (e.key === 'Escape') {
+            const sidebar = document.getElementById('family-sidebar');
+            if (sidebar?.classList.contains('active')) {
+                closeEditorSidebar();
+            }
+        }
+    });
     document.addEventListener('keyup', (e) => { if (e.key === 'Shift') document.body.classList.remove('show-plus'); });
 }
 

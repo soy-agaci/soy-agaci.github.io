@@ -4,11 +4,12 @@ export interface Member {
     first_name?: string;
     last_name?: string;
     birth_date?: string;
+    birthplace?: string;
     death_date?: string;
     birth_place?: string;
     death_place?: string;
     is_spouse?: boolean;
-    gender?: 'E' | 'K';
+    gender?: 'E' | 'K' | 'U';
     gen?: number;
     persistentId?: string;
     name?: string;

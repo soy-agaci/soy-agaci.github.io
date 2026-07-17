@@ -176,8 +176,7 @@ export function is_member(node: D3Node): boolean {
     return node.added_data.input !== undefined;
 }
 
-export function get_gender(node: D3Node): 'E' | 'K' | undefined {
+export function get_gender(node: D3Node): 'E' | 'K' | 'U' | undefined {
     if (!node.added_data.input) return undefined;
     return node.added_data.input.gender;
 }
-

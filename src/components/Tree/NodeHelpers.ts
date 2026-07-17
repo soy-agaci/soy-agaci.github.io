@@ -90,3 +90,8 @@ export function add_images(group: d3.Selection<SVGGElement, D3Node, SVGGElement,
             return '👤'; // Default for unknown/other gender
         });
 }
+
+export function refresh_images(group: d3.Selection<SVGGElement, D3Node, any, unknown>) {
+    group.selectAll('defs, image, text.deceased-symbol, text.gender-symbol').remove();
+    add_images(group as d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>);
+}

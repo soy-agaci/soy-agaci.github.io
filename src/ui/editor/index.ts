@@ -1,349 +1,415 @@
-// import * as d3 from 'd3'; // Unused
-import { Familienbaum } from '../../components/Tree/Familienbaum';
-import { D3Node } from '../../types/types';
-import { get_name, get_image_path, is_member } from '../../components/Tree/dagWithFamilyData';
-import { COLUMN_MAPPING } from './config';
-import { initImageCropper, uploadPhoto } from './image';
-import { setCurrentEditedNode, setPendingChildPhoto, currentEditedNode } from './state';
-import { saveData, deleteChild } from './actions';
-import { showAddChildForm, showAddSpouseForm, showMoveChildForm } from './forms';
+import type { Familienbaum } from '../../components/Tree/Familienbaum';
+import type { D3Node } from '../../types/types';
+import type { FamilyGraph, PublicFamily, SubmissionResult } from '../../services/data/familyRepository';
+import {
+    displayDate,
+    FamilyCreationSubmitter,
+    FamilyEditAttempt,
+    FamilyEditSubmitter,
+    mapChildEdit,
+    mapProfileEdit,
+    mapSpouseEdit,
+    partnershipEndpointsInFamily,
+    type PersonFields,
+} from './submission';
 
-// Export a function to initialize editor
-export function initEditor(familienbaum: Familienbaum) {
-    // Initialize global event listeners for image cropping
-    initImageCropper((file) => {
-        const imageEl = document.getElementById('sidebar-image');
-        if (!imageEl) return;
+type EditorContext = {
+    getGraph: () => FamilyGraph;
+    getFamilies: () => PublicFamily[];
+    onSubmitted: (result: SubmissionResult) => Promise<void>;
+};
 
-        const isAddChildMode = imageEl.dataset.addChildMode === "true";
-        const isAddSpouseMode = imageEl.dataset.addSpouseMode === "true";
+export function suggestFamilySlug(name: string): string {
+    return name.toLocaleLowerCase('tr-TR')
+        .replace(/[çğıöşü]/g, letter => ({ ç: 'c', ğ: 'g', ı: 'i', ö: 'o', ş: 's', ü: 'u' })[letter]!)
+        .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 100).replace(/-$/g, '');
+}
 
-        if (isAddChildMode || isAddSpouseMode) {
-            setPendingChildPhoto(file);
+let editorInvoker: (Element & { focus: () => void }) | null = null;
 
-            // Show preview in sidebar
-            const tempUrl = URL.createObjectURL(file);
-            (imageEl as HTMLImageElement).src = tempUrl;
+export function openEditorSidebar(sidebar: HTMLElement, invoker = document.activeElement) {
+    editorInvoker = invoker && 'focus' in invoker ? invoker as Element & { focus: () => void } : null;
+    sidebar.removeAttribute('inert');
+    sidebar.classList.add('active');
+    sidebar.setAttribute('aria-hidden', 'false');
+}
 
-            // Update upload status
-            const uploadStatus = document.getElementById('add-status');
-            if (uploadStatus) {
-                uploadStatus.innerText = `Fotoğraf hazır (${isAddChildMode ? "çocuk" : "eş"} eklendikten sonra yüklenecek)`;
-                uploadStatus.style.color = "blue";
-            }
-        } else {
-            // Normal edit mode: upload immediately
-            if (currentEditedNode) {
-                uploadPhoto(file, currentEditedNode);
-            }
-        }
-    });
+export function closeEditorSidebar() {
+    const sidebar = document.getElementById('family-sidebar');
+    if (!sidebar) return;
+    sidebar.classList.remove('active');
+    sidebar.setAttribute('aria-hidden', 'true');
+    sidebar.setAttribute('inert', '');
+    editorInvoker?.focus();
+    editorInvoker = null;
+}
 
-    familienbaum.create_editing_form = function (node_of_dag: D3Node, node_of_dag_all: D3Node) {
-        setCurrentEditedNode(node_of_dag);
-        const nameToIdMap = new Map<string, string>();
+const fieldDefinitions: Array<[keyof PersonFields, string, 'text' | 'select']> = [
+    ['first_name', 'Ad', 'text'],
+    ['last_name', 'Soyad', 'text'],
+    ['gender', 'Cinsiyet', 'select'],
+    ['birth_date', 'Doğum tarihi', 'text'],
+    ['birthplace', 'Doğum yeri', 'text'],
+    ['death_date', 'Ölüm tarihi', 'text'],
+    ['death_place', 'Ölüm yeri', 'text'],
+    ['occupation', 'Meslek', 'text'],
+    ['marriage', 'Evlilik tarihi', 'text'],
+    ['note', 'Not', 'text'],
+];
 
-        // 1. Update Tree View (Expand/Highlight)
-        for (let node of this.get_relationship_in_dag_all(node_of_dag_all))
-            node.added_data.is_visible = true;
-        this.draw(true, node_of_dag_all.data);
-
-        // 2. Get Data
-        let name = get_name(node_of_dag) || "İsimsiz";
-        const isSpouse = (node_of_dag.added_data as any).input.is_spouse;
-
-        // 3. Populate Sidebar
-        const sidebar = document.getElementById('family-sidebar');
-        const titleEl = document.getElementById('sidebar-title');
-        const detailsEl = document.getElementById('sidebar-details');
-        const imageEl = document.getElementById('sidebar-image') as HTMLImageElement;
-
-        if (!sidebar || !titleEl || !detailsEl || !imageEl) return;
-
-        // Set Title
-        titleEl.innerText = name;
-
-        // Set Image or Placeholder
-        const imagePath = get_image_path(node_of_dag);
-        const placeholder = "https://upload.wikimedia.org/wikipedia/commons/8/89/Portrait_Placeholder.png";
-
-        imageEl.src = (imagePath && imagePath !== "") ? imagePath : placeholder;
-        imageEl.style.display = "inline-block";
-        imageEl.style.cursor = "pointer";
-        imageEl.title = "Fotoğrafı değiştirmek için tıklayın";
-
-        // Clear add child mode flag
-        imageEl.dataset.addChildMode = "false";
-        imageEl.dataset.addSpouseMode = "false";
-        imageEl.dataset.deletePhoto = "false";
-
-        // Show delete photo button if there's an actual photo
-        const deletePhotoBtn = document.getElementById('delete-photo-btn');
-        if (deletePhotoBtn) {
-            if (imagePath && imagePath !== "") {
-                deletePhotoBtn.style.display = "block";
-                deletePhotoBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    imageEl.dataset.deletePhoto = "true";
-                    imageEl.src = placeholder;
-                    deletePhotoBtn.style.display = "none";
-                    const statusEl = document.getElementById('save-status');
-                    if (statusEl) {
-                        statusEl.innerText = "Fotoğraf silinecek (kaydet butonuna basın)";
-                        statusEl.style.color = "orange";
-                    }
-                };
-            } else {
-                deletePhotoBtn.style.display = "none";
-            }
-        }
-
-        // Click image to upload
-        imageEl.onclick = () => {
-            const input = document.getElementById('image-upload-input');
-            if (input) input.click();
-        };
-
-        // Set Details Form
-        const keyMap: any = {
-            "first_name": "Ad",
-            "last_name": "Soyad",
-            "gender": "Cinsiyet",
-            "birth_date": "Doğum Tarihi",
-            "death_date": "Ölüm Tarihi",
-            "birthplace": "Doğum Yeri",
-            "occupation": "Meslek",
-            "note": "Not",
-            "marriage": "Evlilik Tarihi"
-        };
-
-        let detailsHtml = "";
-
-        const fieldsToEdit = [
-            { key: "first_name", type: "text" },
-            { key: "last_name", type: "text" },
-            {
-                key: "gender", type: "select", options: [
-                    { value: "E", label: "Erkek" },
-                    { value: "K", label: "Kadın" },
-                    { value: "U", label: "Belirsiz" }
-                ]
-            },
-            { key: "birth_date", type: "text" },
-            { key: "birthplace", type: "text" },
-            { key: "death_date", type: "text" },
-            { key: "marriage", type: "text" },
-            { key: "note", type: "text" }
-        ];
-
-        if (is_member(node_of_dag)) {
-            const data = (node_of_dag.added_data as any).input;
-
-            detailsHtml += `<div class="edit-form">`;
-
-            fieldsToEdit.forEach(field => {
-                const displayKey = keyMap[field.key] || field.key;
-                const value = data[field.key] || "";
-
-                detailsHtml += `<div class="info-row">`;
-
-                if (field.type === "select") {
-                    detailsHtml += `<select class="sidebar-input" data-key="${field.key}">
-                                <option value="" disabled ${value === "" ? "selected" : ""}>${displayKey}</option>`;
-                    (field as any).options.forEach((opt: any) => {
-                        const selected = value === opt.value ? 'selected' : '';
-                        detailsHtml += `<option value="${opt.value}" ${selected}>${opt.label}</option>`;
-                    });
-                    detailsHtml += `</select>`;
-                } else {
-                    detailsHtml += `<input type="text" class="sidebar-input" data-key="${field.key}" value="${value}" placeholder="${displayKey}">`;
-                }
-
-                detailsHtml += `</div>`;
-            });
-
-            // Path Finder UI
-            detailsHtml += `
-            <div class="sidebar-section" style="margin-top: 20px; padding-top: 10px; border-top: 1px solid #eee;">
-                <h4 style="margin-bottom: 10px; font-size: 0.9rem;">En Kısa Yol Bul</h4>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <input type="text" id="path-target-input" class="sidebar-input" list="member-list" placeholder="Hedef kişi ismi..." style="width:100%;">
-                    <datalist id="member-list">
-                        ${this.dag_all.nodes()
-                            .filter(n => is_member(n))
-                            .map(n => {
-                                const name = get_name(n);
-                                const bdate = (n.added_data.input as any).birth_date;
-                                let extra = "";
-                                if (bdate) extra += ` (d. ${bdate})`;
-                                
-                                try {
-                                    const unions = this.dag_all.parents(n);
-                                    if (unions.length > 0) {
-                                        const parents = this.dag_all.parents(unions[0]);
-                                        const father = parents.find(p => (p.added_data.input as any)?.gender === 'E');
-                                        const parentName = father ? get_name(father) : (parents.length > 0 ? get_name(parents[0]) : "");
-                                        if (parentName) extra += ` - Baba: ${parentName}`;
-                                    }
-                                } catch(e) {}
-
-                                let displayValue = `${name}${extra}`;
-                                
-                                // Handle duplicates by appending counter
-                                if (nameToIdMap.has(displayValue)) {
-                                    let counter = 2;
-                                    while (nameToIdMap.has(`${displayValue} (${counter})`)) {
-                                        counter++;
-                                    }
-                                    displayValue = `${displayValue} (${counter})`;
-                                }
-                                
-                                nameToIdMap.set(displayValue, n.data);
-                                return `<option value="${displayValue}">`;
-                            })
-                            .join('')}
-                    </datalist>
-                    <button id="btn-find-path" class="action-btn btn-primary" style="width: 100%; padding: 12px;">Bul</button>
-                </div>
-            </div>`;
-
-            const isLeafNode = Array.from(node_of_dag_all.children!()).length === 0;
-
-            let actionButton = "";
-            if (isSpouse) {
-                actionButton = `<button id="btn-add-child" class="action-btn btn-primary">👶 Çocuk Ekle</button>`;
-            } else {
-                actionButton = `<button id="btn-add-spouse" class="action-btn btn-secondary">💍 Eş Ekle</button>`;
-            }
-
-            let deleteButton = "";
-            if (isLeafNode) {
-                deleteButton = `<button id="btn-delete-child" class="action-btn btn-danger">🗑️ Sil</button>`;
-            }
-
-            detailsHtml += `
-            <div class="button-row" style="margin-top:15px; display:flex; flex-direction:column; gap:10px;">
-                <div style="display:flex; gap:8px; width:100%;">
-                    ${actionButton}
-                    ${deleteButton}
-                </div>
-                <div style="display:flex; gap:8px; width:100%; align-items:center;">
-                    <button id="btn-save-changes" class="action-btn btn-success" style="flex:1;">💾 Kaydet</button>
-                </div>
-                <div id="save-status" style="text-align:center; font-size:0.85rem; min-height:1.2em;"></div>
-            </div>
-        </div>`;
-
-        } else {
-            detailsHtml = "<em>Aile Bağlantısı (Düzenlenemez)</em>";
-        }
-        detailsEl.innerHTML = detailsHtml;
-
-        // Bind Buttons
-        const btnSave = document.getElementById('btn-save-changes');
-        const btnAddChild = document.getElementById('btn-add-child');
-        const btnAddSpouse = document.getElementById('btn-add-spouse');
-        const btnDeleteChild = document.getElementById('btn-delete-child');
-        const btnFindPath = document.getElementById('btn-find-path');
-
-        if (btnSave) {
-            btnSave.onclick = () => {
-                const updates: any = {};
-                const inputs = detailsEl.querySelectorAll('input.sidebar-input, select.sidebar-input');
-                inputs.forEach(inp => {
-                    const key = inp.getAttribute('data-key');
-                    const val = (inp as HTMLInputElement).value;
-                    const original = (node_of_dag.added_data as any).input[key!] || "";
-
-                    if (val !== original) {
-                        const colIndex = COLUMN_MAPPING[key!];
-                        if (colIndex) updates[colIndex] = val;
-                    }
-                });
-
-                if (imageEl.dataset.deletePhoto === "true") {
-                    updates[COLUMN_MAPPING['image_path']] = "";
-                }
-
-                if (Object.keys(updates).length > 0) {
-                    saveData(node_of_dag, updates);
-                    imageEl.dataset.deletePhoto = "false";
-                    const deletePhotoBtn = document.getElementById('delete-photo-btn');
-                    if (deletePhotoBtn) deletePhotoBtn.style.display = "none";
-                } else {
-                    const statusEl = document.getElementById('save-status');
-                    if (statusEl) statusEl.innerText = "Değişiklik yok.";
-                }
-            };
-        }
-
-        if (btnAddChild) {
-            btnAddChild.onclick = () => {
-                showAddChildForm(node_of_dag);
-            };
-        }
-
-        if (btnAddSpouse) {
-            btnAddSpouse.onclick = () => {
-                showAddSpouseForm(node_of_dag);
-            };
-        }
-
-        if (btnDeleteChild) {
-            btnDeleteChild.onclick = () => {
-                deleteChild(node_of_dag);
-            };
-        }
-
-        const btnMove = document.createElement("button");
-        btnMove.className = "action-btn btn-warning";
-        btnMove.innerText = "↔️ Ebeveyn Değiştir";
-        btnMove.style.marginTop = "10px";
-        btnMove.onclick = () => showMoveChildForm(node_of_dag);
-
-        if (is_member(node_of_dag) && !(node_of_dag.added_data as any).input.is_spouse) {
-            const btnRow = detailsEl.querySelector('.button-row');
-            if (btnRow) {
-                btnRow.appendChild(btnMove);
-            }
-        }
-
-        const btnSheet = document.getElementById('btn-open-sheet');
-        if (btnSheet) {
-            const memberData = (node_of_dag.added_data as any).input;
-            if (memberData && memberData.row_index) {
-                const row = parseInt(memberData.row_index);
-                const sheetEditUrl = `https://docs.google.com/spreadsheets/d/12kZlANYbq0w3k8TpDxssVSlWVfbs-qZQ9bAjERci0SM/edit#gid=790197592&range=${row}:${row}`;
-
-                btnSheet.onclick = () => window.open(sheetEditUrl, "_blank");
-                btnSheet.innerText = `✏️ Bu Satırı Düzenle (Satır ${row})`;
-            } else {
-                // Fallback: Just open the sheet without a specific row
-                btnSheet.onclick = () => window.open("https://docs.google.com/spreadsheets/d/12kZlANYbq0w3k8TpDxssVSlWVfbs-qZQ9bAjERci0SM/edit?gid=790197592", "_blank");
-                btnSheet.innerText = "Google Tablosunu Aç";
-            }
-        }
-
-        if (btnFindPath) {
-            btnFindPath.onclick = () => {
-                const input = document.getElementById('path-target-input') as HTMLInputElement;
-                const inputValue = input.value;
-                if (!inputValue) return;
-
-                const targetId = nameToIdMap.get(inputValue);
-                
-                if (targetId) {
-                    familienbaum.findPath(node_of_dag_all.data, targetId);
-                } else {
-                    alert("Kişi bulunamadı: " + inputValue);
-                }
-            };
-        }
-
-        sidebar.classList.add('active');
+function blankPerson(): PersonFields {
+    return {
+        first_name: '', last_name: '', gender: '', birth_date: '', birthplace: '',
+        death_date: '', death_place: '', occupation: '', marriage: '', note: '',
     };
+}
 
-    familienbaum.create_info_form = function () {
-        window.open("https://docs.google.com/spreadsheets/d/12kZlANYbq0w3k8TpDxssVSlWVfbs-qZQ9bAjERci0SM/edit?gid=790197592", "_blank");
+function personId(node: D3Node): string {
+    const id = (node.added_data.input as { persistentId?: string } | undefined)?.persistentId;
+    if (!id) throw new Error('Seçilen kişinin kalıcı kimliği bulunamadı.');
+    return id;
+}
+
+function graphFields(graph: FamilyGraph, id: string): PersonFields {
+    const person = graph.people.find(candidate => candidate.id === id)?.current_revision;
+    if (!person) return blankPerson();
+    const event = (type: string) => graph.life_events.find(candidate =>
+        candidate.person_id === id && candidate.current_revision?.event_type === type)?.current_revision;
+    const birth = event('birth');
+    const death = event('death');
+    const occupation = event('occupation');
+    const partnerships = graph.partnerships.filter(partnership => partnership.current_revision
+        && [partnership.person1_id, partnership.person2_id].includes(id));
+    return {
+        first_name: person.given_name ?? '',
+        last_name: person.family_name ?? '',
+        gender: person.gender ?? '',
+        birth_date: displayDate(birth),
+        birthplace: birth?.place_text ?? '',
+        death_date: displayDate(death),
+        death_place: death?.place_text ?? '',
+        occupation: occupation?.details ?? '',
+        marriage: partnerships.length === 1
+            ? displayDate(partnerships[0].current_revision)
+            : '',
+        note: person.summary ?? '',
+    };
+}
+
+function addInput(container: HTMLElement, key: keyof PersonFields, label: string, type: 'text' | 'select', value = '') {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'editor-field';
+    wrapper.textContent = label;
+    let input: HTMLInputElement | HTMLSelectElement;
+    if (type === 'select') {
+        input = document.createElement('select');
+        for (const [optionValue, optionLabel] of [['', 'Belirsiz'], ['E', 'Erkek'], ['K', 'Kadın'], ['U', 'Belirsiz']]) {
+            input.add(new Option(optionLabel, optionValue));
+        }
+    } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.autocomplete = 'off';
+    }
+    input.className = 'sidebar-input';
+    input.name = String(key);
+    input.value = value;
+    wrapper.append(input);
+    container.append(wrapper);
+    return input;
+}
+
+function addPersonFields(container: HTMLElement, values: PersonFields, prefix = '') {
+    for (const [key, label, type] of fieldDefinitions) {
+        if (prefix && ['marriage', 'source_title', 'source_url', 'source_citation', 'media_url', 'media_type', 'media_caption'].includes(key)) continue;
+        addInput(container, `${prefix}${key}` as keyof PersonFields, label, type, values[key] ?? '');
+    }
+}
+
+function readPerson(form: HTMLFormElement, prefix = ''): PersonFields {
+    const value = (key: keyof PersonFields) =>
+        (form.elements.namedItem(`${prefix}${key}`) as HTMLInputElement | HTMLSelectElement | null)?.value.trim() ?? '';
+    return {
+        first_name: value('first_name'), last_name: value('last_name'), gender: value('gender'),
+        birth_date: value('birth_date'), birthplace: value('birthplace'), death_date: value('death_date'),
+        death_place: value('death_place'), occupation: value('occupation'), marriage: value('marriage'), note: value('note'),
+        source_title: value('source_title'), source_url: value('source_url'), source_citation: value('source_citation'),
+        media_url: value('media_url'), media_type: (value('media_type') || 'image/jpeg') as PersonFields['media_type'],
+        media_caption: value('media_caption'),
+    };
+}
+
+function addExtras(form: HTMLFormElement) {
+    const details = document.createElement('details');
+    details.className = 'editor-extras';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Kaynak / medya';
+    details.append(summary);
+    addInput(details, 'source_title', 'Kaynak başlığı', 'text');
+    addInput(details, 'source_url', 'Kaynak HTTPS adresi', 'text');
+    addInput(details, 'source_citation', 'Kaynak notu', 'text');
+    addInput(details, 'media_url', 'Görsel HTTPS adresi', 'text');
+    const type = document.createElement('select');
+    type.name = 'media_type';
+    type.className = 'sidebar-input';
+    for (const mime of ['image/jpeg', 'image/png', 'image/webp', 'image/gif']) type.add(new Option(mime, mime));
+    details.append(type);
+    addInput(details, 'media_caption', 'Görsel açıklaması', 'text');
+    form.append(details);
+}
+
+function editableFamilies(graph: FamilyGraph, id: string, families: PublicFamily[]): PublicFamily[] {
+    const familyIds = new Set(graph.memberships.filter(membership => membership.person_id === id
+        && membership.current_revision).map(membership => membership.family_id));
+    return families.filter(family => familyIds.has(family.id));
+}
+
+function addFamilySelect(form: HTMLFormElement, families: PublicFamily[], title = 'Hedef aile') {
+    const label = document.createElement('label');
+    label.className = 'editor-field';
+    label.textContent = title;
+    const select = document.createElement('select');
+    select.name = 'family_id';
+    select.className = 'sidebar-input';
+    select.required = true;
+    for (const family of families) select.add(new Option(family.name, family.id));
+    label.append(select);
+    form.prepend(label);
+}
+
+function statusElement(form: HTMLFormElement) {
+    const status = document.createElement('div');
+    status.className = 'editor-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    form.append(status);
+    return status;
+}
+
+export function initEditor(tree: Familienbaum, context: EditorContext) {
+    const submitter = new FamilyEditSubmitter();
+    const familyCreationSubmitter = new FamilyCreationSubmitter();
+
+    tree.create_editing_form = (node: D3Node, nodeAll: D3Node) => {
+        const sidebar = document.getElementById('family-sidebar');
+        const title = document.getElementById('sidebar-title');
+        const details = document.getElementById('sidebar-details');
+        const image = document.getElementById('sidebar-image') as HTMLImageElement | null;
+        if (!sidebar || !title || !details) return;
+
+        let selectedId: string;
+        try { selectedId = personId(node); } catch (error) {
+            details.textContent = error instanceof Error ? error.message : 'Kişi açılamadı.';
+            return;
+        }
+        const graph = context.getGraph();
+        const values = graphFields(graph, selectedId);
+        const families = editableFamilies(graph, selectedId, context.getFamilies());
+        title.textContent = `${values.first_name} ${values.last_name}`.trim() || 'İsimsiz';
+        if (image) {
+            image.src = (node.added_data.input as { image_path?: string } | undefined)?.image_path ?? '';
+            image.style.display = image.src ? 'block' : 'none';
+            image.onclick = null;
+        }
+        openEditorSidebar(sidebar);
+
+        const render = (mode: 'profile' | 'spouse' | 'child' | 'family') => {
+            const attempt = new FamilyEditAttempt(submitter);
+            details.replaceChildren();
+            if (mode === 'profile') {
+                const modeActions = document.createElement('div');
+                modeActions.className = 'editor-mode-actions';
+                const spouse = document.createElement('button');
+                spouse.type = 'button';
+                spouse.className = 'action-btn btn-secondary';
+                spouse.textContent = '+ Eş / partner';
+                spouse.onclick = () => render('spouse');
+                const child = document.createElement('button');
+                child.type = 'button';
+                child.className = 'action-btn btn-primary';
+                child.textContent = '+ Çocuk';
+                child.onclick = () => render('child');
+                const family = document.createElement('button');
+                family.type = 'button';
+                family.className = 'action-btn btn-secondary';
+                family.textContent = 'Aile başlat';
+                family.onclick = () => render('family');
+                modeActions.append(spouse, child, family);
+                details.append(modeActions);
+            }
+            if (mode === 'family') {
+                const form = document.createElement('form');
+                form.className = 'edit-form family-creation-form';
+                form.noValidate = true;
+                addFamilySelect(form, families, 'Kaynak aile');
+                const root = document.createElement('p');
+                root.className = 'family-creation-context';
+                root.textContent = `Kök kişi: ${values.first_name} ${values.last_name}`.trim();
+                const name = addInput(form, 'family_name' as keyof PersonFields, 'Yeni aile adı', 'text') as HTMLInputElement;
+                name.required = true; name.maxLength = 200;
+                const slug = addInput(form, 'family_slug' as keyof PersonFields, 'Adres kısa adı', 'text') as HTMLInputElement;
+                slug.required = true; slug.maxLength = 100; slug.pattern = '[a-z0-9]+(?:-[a-z0-9]+)*';
+                let slugEdited = false;
+                name.addEventListener('input', () => { if (!slugEdited) slug.value = suggestFamilySlug(name.value); });
+                slug.addEventListener('input', () => { slugEdited = true; familyCreationSubmitter.invalidate(); });
+                form.addEventListener('input', () => familyCreationSubmitter.invalidate());
+                const actions = document.createElement('div');
+                actions.className = 'editor-actions';
+                const cancel = document.createElement('button');
+                cancel.type = 'button'; cancel.className = 'action-btn btn-secondary'; cancel.textContent = 'İptal';
+                cancel.onclick = () => render('profile');
+                const submit = document.createElement('button');
+                submit.type = 'submit'; submit.className = 'action-btn btn-success'; submit.textContent = 'Öner';
+                actions.append(cancel, submit);
+                form.append(root, actions);
+                const status = statusElement(form);
+                let sending = false;
+                form.onsubmit = async event => {
+                    event.preventDefault();
+                    if (sending) return;
+                    const sourceFamilyId = (form.elements.namedItem('family_id') as HTMLSelectElement).value;
+                    if (!form.checkValidity() || !sourceFamilyId) {
+                        (form.querySelector(':invalid') as HTMLElement | null)?.focus();
+                        status.textContent = sourceFamilyId ? 'Geçerli bir aile adı ve kısa ad girin.' : 'Görünür kaynak aile gereklidir.';
+                        status.className = 'editor-status error';
+                        return;
+                    }
+                    try {
+                        sending = true; submit.disabled = true; status.className = 'editor-status'; status.textContent = 'Gönderiliyor…';
+                        const result = await familyCreationSubmitter.send({
+                            sourceFamilyId, rootPersonId: selectedId, name: name.value, slug: slug.value,
+                        });
+                        status.textContent = 'Aile önerisi gönderildi · Beklemede'; status.classList.add('success');
+                        await context.onSubmitted(result);
+                    } catch (error) {
+                        status.textContent = error instanceof Error ? error.message : 'Gönderilemedi. Tekrar deneyin.';
+                        status.className = 'editor-status error';
+                    } finally { sending = false; submit.disabled = false; }
+                };
+                details.append(form);
+                name.focus();
+                return;
+            }
+            const form = document.createElement('form');
+            form.className = 'edit-form';
+            form.noValidate = true;
+            addFamilySelect(form, families);
+            addPersonFields(form, mode === 'profile' ? values : { ...blankPerson(), last_name: values.last_name });
+            if (mode === 'profile') {
+                const partnership = graph.partnerships.filter(candidate => candidate.current_revision
+                    && [candidate.person1_id, candidate.person2_id].includes(selectedId));
+                const marriage = form.elements.namedItem('marriage') as HTMLInputElement;
+                const family = form.elements.namedItem('family_id') as HTMLSelectElement;
+                const updateMarriage = () => {
+                    const editable = partnership.length === 1
+                        && partnershipEndpointsInFamily(graph, partnership[0].id, family.value);
+                    marriage.disabled = !editable;
+                    marriage.title = editable ? '' : 'Her iki kişiyi içeren hedef aile gereklidir.';
+                };
+                family.addEventListener('change', updateMarriage);
+                updateMarriage();
+            }
+            if (mode === 'child') {
+                const label = document.createElement('label');
+                label.className = 'editor-field';
+                label.textContent = 'İkinci ebeveyn';
+                const select = document.createElement('select');
+                select.name = 'second_parent';
+                select.className = 'sidebar-input';
+                select.add(new Option('Yok / bilinmiyor', ''));
+                select.add(new Option('Yeni ebeveyn ekle', 'new'));
+                for (const person of graph.people) {
+                    if (person.id !== selectedId && person.current_revision) {
+                        select.add(new Option(person.current_revision.display_name, person.id));
+                    }
+                }
+                label.append(select);
+                form.append(label);
+                const newParent = document.createElement('fieldset');
+                newParent.className = 'new-parent-fields';
+                newParent.hidden = true;
+                const legend = document.createElement('legend');
+                legend.textContent = 'Yeni ebeveyn';
+                newParent.append(legend);
+                addPersonFields(newParent, blankPerson(), 'parent_');
+                form.append(newParent);
+                select.onchange = () => { newParent.hidden = select.value !== 'new'; };
+            }
+            addExtras(form);
+            const actions = document.createElement('div');
+            actions.className = 'editor-actions';
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'action-btn btn-secondary';
+            cancel.textContent = 'İptal';
+            cancel.onclick = () => render('profile');
+            const submit = document.createElement('button');
+            submit.type = 'submit';
+            submit.className = 'action-btn btn-success';
+            submit.textContent = mode === 'profile' ? 'Kaydet' : mode === 'spouse' ? 'Eş / partner ekle' : 'Çocuk ekle';
+            actions.append(cancel, submit);
+            form.append(actions);
+            const status = statusElement(form);
+            let sending = false;
+            const invalidate = () => attempt.invalidate();
+            form.addEventListener('input', invalidate);
+            form.addEventListener('change', invalidate);
+            form.onsubmit = async event => {
+                event.preventDefault();
+                if (sending) return;
+                status.className = 'editor-status';
+                const fields = readPerson(form);
+                if (!fields.first_name || !fields.last_name) {
+                    status.textContent = 'Ad ve soyad gereklidir.';
+                    status.classList.add('error');
+                    return;
+                }
+                const familyId = (form.elements.namedItem('family_id') as HTMLSelectElement).value;
+                if (!familyId) {
+                    status.textContent = 'Bu kişi için düzenlenebilir bir hedef aile yok.';
+                    status.classList.add('error');
+                    return;
+                }
+                try {
+                    sending = true;
+                    submit.disabled = true;
+                    status.textContent = 'Gönderiliyor…';
+                    const result = await attempt.send(familyId, () => {
+                        const currentFields = readPerson(form);
+                        if (mode === 'profile') return mapProfileEdit(graph, selectedId, currentFields, familyId);
+                        if (mode === 'spouse') return mapSpouseEdit(graph, selectedId, currentFields, currentFields.marriage);
+                        const choice = (form.elements.namedItem('second_parent') as HTMLSelectElement).value;
+                        if (choice === 'new') {
+                            const parent = readPerson(form, 'parent_');
+                            if (!parent.first_name || !parent.last_name) {
+                                throw new Error('Yeni ebeveyn için ad ve soyad gereklidir.');
+                            }
+                        }
+                        return mapChildEdit(graph, selectedId, currentFields, (() => {
+                                const choice = (form.elements.namedItem('second_parent') as HTMLSelectElement).value;
+                                if (choice === 'new') return { fields: readPerson(form, 'parent_') };
+                                return choice ? { personId: choice } : {};
+                            })(), familyId);
+                    });
+                    status.textContent = 'Değişiklik gönderildi · Beklemede';
+                    status.classList.add('success');
+                    await context.onSubmitted(result);
+                } catch (error) {
+                    status.textContent = error instanceof Error ? error.message : 'Gönderilemedi. Bağlantıyı kontrol edip tekrar deneyin.';
+                    status.classList.add('error');
+                } finally {
+                    sending = false;
+                    submit.disabled = false;
+                }
+            };
+            details.append(form);
+            (form.querySelector('input[name="first_name"]') as HTMLInputElement | null)?.focus();
+        };
+
+        render('profile');
+
+        for (const related of tree.get_relationship_in_dag_all(nodeAll)) related.added_data.is_visible = true;
+        tree.draw(true, nodeAll.data);
     };
 }

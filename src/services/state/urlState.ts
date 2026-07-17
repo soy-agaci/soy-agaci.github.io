@@ -1,8 +1,11 @@
 import { FamilyData, Member } from '../../types/types';
+import { normalizeFamilySlugs } from '../data/familyRepository';
 
 // Map between persistent IDs and mem_X IDs
 export const persistentIdMap = new Map<string, string>(); // persistentId -> mem_X
 export const reverseIdMap = new Map<string, string>();    // mem_X -> persistentId
+const idIndexMap = new Map<string, string>();             // mem_X -> short index
+const indexIdMap = new Map<string, string>();             // short index -> mem_X
 
 // Generate persistent ID from member data (human-readable)
 function getPersistentId(member: Member): string {
@@ -28,13 +31,15 @@ function getPersistentId(member: Member): string {
 export function buildIdMaps(familyData: FamilyData) {
     persistentIdMap.clear();
     reverseIdMap.clear();
+    idIndexMap.clear();
+    indexIdMap.clear();
 
     const counts = new Map<string, number>(); // Track duplicates
 
     // Sort keys to ensure deterministic order for duplicate handling
     const memberIds = Object.keys(familyData.members).sort();
 
-    for (const memId of memberIds) {
+    memberIds.forEach((memId, index) => {
         const member = familyData.members[memId];
         if (!member.is_spouse || member.first_name) {
             let persistentId = getPersistentId(member);
@@ -50,17 +55,29 @@ export function buildIdMaps(familyData: FamilyData) {
             member.persistentId = persistentId; // Update with deduplicated ID
             persistentIdMap.set(persistentId, memId);
             reverseIdMap.set(memId, persistentId);
+            const shortId = index.toString(36);
+            idIndexMap.set(memId, shortId);
+            indexIdMap.set(shortId, memId);
         }
-    }
+    });
+}
+
+function encodeNodeId(id: string | null) {
+    return id ? idIndexMap.get(id) ?? reverseIdMap.get(id) ?? null : null;
+}
+
+function decodeNodeId(id: unknown) {
+    if (typeof id !== 'string') return null;
+    return indexIdMap.get(id) ?? persistentIdMap.get(id) ?? null;
 }
 
 // Encode state to URL-friendly base64 string
-export function encodeState(currentNode: string | null, transform: any, patrilineal: boolean, visibleNodes: Set<string>): string | null {
+export function encodeState(currentNode: string | null, transform: any, patrilineal: boolean, visibleNodes?: Set<string>): string | null {
     const state = {
-        n: currentNode ? reverseIdMap.get(currentNode) || null : null,
-        t: transform ? { k: transform.k, x: Math.round(transform.x), y: Math.round(transform.y) } : null,
+        n: encodeNodeId(currentNode),
+        t: transform ? [Math.round(transform.k * 100) / 100, Math.round(transform.x), Math.round(transform.y)] : null,
         p: patrilineal ? 1 : 0,
-        v: visibleNodes ? Array.from(visibleNodes).map(id => reverseIdMap.get(id)).filter(Boolean) : []
+        v: visibleNodes ? Array.from(visibleNodes).map(encodeNodeId).filter(Boolean).join('.') : '',
     };
 
     try {
@@ -97,16 +114,16 @@ export function decodeState(): any {
             currentNode: null as string | null,
             transform: null as { k: number, x: number, y: number } | null,
             patrilineal: false,
-            visibleNodes: new Set<string>()
+            visibleNodes: undefined as Set<string> | undefined,
         };
 
         // Restore current node
-        if (state.n && persistentIdMap.has(state.n)) {
-            decoded.currentNode = persistentIdMap.get(state.n) || null;
-        }
+        decoded.currentNode = decodeNodeId(state.n);
 
         // Restore transform
-        if (state.t && typeof state.t.k === 'number' && typeof state.t.x === 'number' && typeof state.t.y === 'number') {
+        if (Array.isArray(state.t) && state.t.length === 3 && state.t.every((value: unknown) => typeof value === 'number')) {
+            decoded.transform = { k: state.t[0], x: state.t[1], y: state.t[2] };
+        } else if (state.t && typeof state.t.k === 'number' && typeof state.t.x === 'number' && typeof state.t.y === 'number') {
             decoded.transform = state.t;
         }
 
@@ -114,9 +131,16 @@ export function decodeState(): any {
         decoded.patrilineal = state.p === 1;
 
         // Restore visible nodes
-        if (Array.isArray(state.v)) {
+        if (typeof state.v === 'string' && state.v) {
+            decoded.visibleNodes = new Set<string>();
+            for (const id of state.v.split('.')) {
+                const memId = decodeNodeId(id);
+                if (memId) decoded.visibleNodes.add(memId);
+            }
+        } else if (Array.isArray(state.v)) {
+            decoded.visibleNodes = new Set<string>();
             for (const pid of state.v) {
-                const memId = persistentIdMap.get(pid);
+                const memId = decodeNodeId(pid);
                 if (memId) {
                     decoded.visibleNodes.add(memId);
                 }
@@ -149,6 +173,22 @@ export function updateURL(state: any) {
     }
 }
 
+export function updateDataQuery(
+    families: string[],
+    includePending: boolean,
+    proposalId?: string,
+    mode: 'replace' | 'push' = 'replace',
+) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('family');
+    for (const family of normalizeFamilySlugs(families)) url.searchParams.append('family', family);
+    if (includePending) url.searchParams.set('view', 'pending');
+    else url.searchParams.delete('view');
+    if (includePending && proposalId) url.searchParams.set('proposal', proposalId);
+    else url.searchParams.delete('proposal');
+    history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', url.pathname + url.search + url.hash);
+}
+
 // Share functionality with TinyURL
 export async function shareCurrentState(state: any) {
     const shareBtn = document.getElementById('share-btn');
@@ -156,13 +196,14 @@ export async function shareCurrentState(state: any) {
     const originalContent = shareBtn.innerHTML;
 
     try {
-        // Update URL first to ensure it's current
-        updateURL(state);
-
-        const fullURL = window.location.href;
+        const currentNode = state.selectedNodeId || (state.familyData ? state.familyData.start : null);
+        const shareHash = encodeState(currentNode, null, state.isPatrilineal, state.visibleNodes);
+        const shareURL = new URL(window.location.href);
+        if (shareHash) shareURL.hash = shareHash;
+        const fullURL = shareURL.href;
 
         // Show loading state
-        shareBtn.innerHTML = '<span style="font-size: 1.2em;">⏳</span><span>Kısaltılıyor...</span>';
+        shareBtn.innerHTML = '<span style="font-size: 1.2em;">⏳</span>';
         (shareBtn as HTMLButtonElement).disabled = true;
 
         // Try TinyURL API (Old API, Deprecated but working without CORS)
@@ -177,7 +218,7 @@ export async function shareCurrentState(state: any) {
         await navigator.clipboard.writeText(shortURL);
 
         // Show success
-        shareBtn.innerHTML = '<span style="font-size: 1.2em;">✅</span><span>Kopyalandı!</span>';
+        shareBtn.innerHTML = '<span style="font-size: 1.2em;">✅</span>';
         setTimeout(() => {
             shareBtn.innerHTML = originalContent;
             (shareBtn as HTMLButtonElement).disabled = false;
@@ -189,13 +230,13 @@ export async function shareCurrentState(state: any) {
         try {
             // Fallback: copy full URL
             await navigator.clipboard.writeText(window.location.href);
-            shareBtn.innerHTML = '<span style="font-size: 1.2em;">✅</span><span>Kopyalandı!</span>';
+            shareBtn.innerHTML = '<span style="font-size: 1.2em;">✅</span>';
             setTimeout(() => {
                 shareBtn.innerHTML = originalContent;
                 (shareBtn as HTMLButtonElement).disabled = false;
             }, 2000);
         } catch (clipboardError) {
-            shareBtn.innerHTML = '<span style="font-size: 1.2em;">❌</span><span>Hata!</span>';
+            shareBtn.innerHTML = '<span style="font-size: 1.2em;">❌</span>';
             setTimeout(() => {
                 shareBtn.innerHTML = originalContent;
                 (shareBtn as HTMLButtonElement).disabled = false;

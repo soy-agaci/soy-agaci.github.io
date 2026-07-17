@@ -149,6 +149,52 @@ describe('TreeRenderer', () => {
             renderer.draw_nodes([node], currentNode);
             expect(g.selectAll('g.node').size()).toBe(1);
         });
+
+        it('refreshes a pending profile name and media on an existing node', () => {
+            renderer.transition_milliseconds = 0;
+            const currentNode = createMockNode('mem_0');
+            renderer.draw_nodes([currentNode], currentNode);
+
+            const revised = createMockNode('mem_0');
+            (revised.added_data.input as any).name = 'Pending Renamed Person';
+            (revised.added_data.input as any).image_path = 'https://example.test/pending.webp';
+            renderer.draw_nodes([revised], revised);
+
+            expect(g.selectAll('g.node').size()).toBe(1);
+            expect(g.select('text.node-label').text()).toContain('Pending Renamed Person');
+            expect(g.selectAll('g.node-content image').size()).toBe(1);
+            expect(g.select('g.node-content image').attr('href')).toBe('https://example.test/pending.webp');
+        });
+
+        it('opens editing from the keyboard-accessible node control', () => {
+            renderer.transition_milliseconds = 0;
+            const node = createMockNode('mem_0');
+            renderer.draw_nodes([node], node);
+            const control = g.select<SVGGElement>('g.edit-control').node()!;
+            control.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            expect(control.getAttribute('tabindex')).toBe('0');
+            expect(onEditClick).toHaveBeenCalledWith(node);
+        });
+
+        it('makes only person nodes keyboard buttons without duplicate activation', () => {
+            renderer.transition_milliseconds = 0;
+            const person = createMockNode('mem_0');
+            const union = createMockNode('u_0', false);
+            renderer.draw_nodes([person, union], person);
+
+            const personControl = g.select<SVGGElement>('g.node-content[role="button"]').node()!;
+            const unionControl = g.selectAll<SVGGElement, D3Node>('g.node-content').filter((node: D3Node) => !node.added_data.input).node()!;
+            expect(personControl.getAttribute('tabindex')).toBe('0');
+            expect(personControl.getAttribute('aria-label')).toBe('Kişiyi aç: Person mem_0');
+            expect(unionControl.hasAttribute('role')).toBe(false);
+            expect(unionControl.hasAttribute('tabindex')).toBe(false);
+            expect(g.selectAll('g.edit-control').size()).toBe(1);
+
+            personControl.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            personControl.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: ' ', bubbles: true, repeat: true }));
+            expect(onNodeClick).toHaveBeenCalledTimes(1);
+            expect(onNodeClick).toHaveBeenCalledWith(person, expect.anything());
+        });
     });
 
     describe('draw_links', () => {

@@ -10,14 +10,28 @@ The family tree is deployed at: [https://camakoglu.github.io/aile/](https://cama
 
 ### Prerequisites
 
-- Node.js (v18 or higher)
+- Node.js 22.12 or higher
 - npm
+- Docker with Compose support
+- Google Chrome (`/usr/bin/google-chrome`) or `CHROME_PATH` set to a Chromium-compatible executable
 
 ### Setup
 
 ```bash
 npm install
+cp .env.example .env
 ```
+
+Start Supabase locally, then copy only the API URL and publishable key from the status output into `.env`:
+
+```bash
+npm run supabase:start
+npm run supabase:status
+```
+
+Stop the local stack with `npm run supabase:stop`. Docker is required for local Supabase.
+`VITE_FAMILY_SLUGS` selects one or more comma-separated families. A URL can override it with
+`?family=demo-alpha&family=demo-beta`.
 
 ### Running Locally
 
@@ -32,6 +46,63 @@ The app will be available at `http://localhost:5173`
 ```bash
 npm test
 ```
+
+Run the fail-closed local release gate from Docker and a clean checkout with:
+
+```bash
+PRIMARY_CSV=.local/selcuk.csv npm run verify:local
+```
+
+`PRIMARY_CSV` is optional when the published source is reachable. Primary parity is
+always required for release verification; retrieval or parity failure makes the
+gate fail. `ALLOW_PARITY_SKIP=1` is a non-release diagnostic override and must
+never be used for a release decision. Supplying the private local capture makes
+520/145/664 parity deterministic without logging rows.
+The gate starts and resets Supabase, runs pgTAP and HTTP/JWT integration tests,
+checks generated types, frontend tests, production build/security scans, and
+the Chrome workflow, then resets and checks synthetic residue. The legacy
+`npm run test:local-step7` alias runs the same gate.
+
+### Google Admin Review
+
+The public app needs only `VITE_SUPABASE_URL` and the publishable key. Admin sign-in is Google OAuth only; Supabase persists the browser session. With Google credentials unset the public tree still works and the sign-in button reports the provider error.
+
+For local Supabase, export `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET` before starting the stack. In Google Cloud, register this authorized redirect URI:
+
+```text
+http://127.0.0.1:54321/auth/v1/callback
+```
+
+For a hosted project, configure the same Google client ID/secret in Supabase Dashboard under Authentication > Providers > Google. Register `https://<project-ref>.supabase.co/auth/v1/callback` in Google Cloud, and add the deployed app URL/path to Supabase Authentication URL Configuration. Do not put the Google secret or service-role key in any `VITE_` variable.
+
+Bootstrap the first admin out of band after that user has signed in with Google once. The CLI refuses non-Google users and succeeds exactly once for the lifetime of the database:
+
+```bash
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npm run admin -- bootstrap admin@example.com
+```
+
+Run this once from a trusted operator shell. A durable, inaccessible marker records completion; an upgraded database with any historical admin row starts completed. Disabling the only admin does not reopen bootstrap or reactivate that account. After bootstrap, active Google admins invite and revoke invitations in the review dialog, which is the only path for a disabled admin to return. Invitees sign in with Google and are activated automatically; there is no open signup. The service-role key is never used by browser code.
+
+### Importing a Sheet
+
+The local importer defaults new person revisions to `family` privacy. Choose public visibility explicitly for public-site data:
+
+```bash
+npm run import:sheet -- --file .local/selcuk.csv --family-slug selcuk --family-name "Selçuk" --privacy public
+```
+
+Set `PRIMARY_CSV=.local/selcuk.csv` to use the ignored private capture for the required aggregate-only production parity test.
+
+See [Production handoff](docs/production-handoff.md) for hosted Supabase, Google OAuth,
+admin provisioning, import, deployment, backup, recovery, security, and smoke procedures.
+
+### Starting a family from an existing person
+
+Open a visible person and choose **Aile başlat**. Select the source family, enter the new
+family name, review or edit the suggested slug, and submit. The proposal appears only in
+**Bekleyen** mode until an active Google admin approves the whole submission. Approval
+creates a discoverable family rooted at the same canonical person ID; rejection creates no
+family or membership. There is no direct or admin-only creation shortcut.
 
 ## 📦 Deployment to GitHub Pages
 
@@ -81,6 +152,7 @@ soyagaci/
 ├── css/              # Stylesheets
 ├── fotograf/         # Family photos
 ├── public/           # Public assets (generated)
+├── supabase/         # Local Supabase configuration
 ├── dist/             # Production build (generated)
 ├── index.html        # Main HTML file
 ├── vite.config.ts    # Vite configuration

@@ -10,7 +10,7 @@ describe('sheetLoader', () => {
         const rows = [
             // Gen, Name, Surname, Father, Mother, BirthDate, BirthPlace, DeathDate, Image, Marriage, Gender, Note, ID
             ['1', 'Root', 'Family', '', '', '1900', 'Place', '', '', '', 'E', '', '1'],
-            ['2', 'Child', 'Family', 'Root', 'Mom', '1930', 'Place', '', '', '', 'E', '', '2']
+            ['2', 'Child', 'Family', 'Root', 'Parent B', '1930', 'Place', '', '', '', 'E', '', '2']
         ];
 
         // We need to cast to any if processSheetData is not exported,
