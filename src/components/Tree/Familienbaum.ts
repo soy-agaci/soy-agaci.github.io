@@ -62,7 +62,7 @@ export class Familienbaum {
         if (!this.data.members) throw "No members in input";
         if (!this.data.start) throw "No starting node ID in input";
         // Create the entire DAG and read input
-        this.dag_all = dag_with_family_data(this.data.links, this.data.members);
+        this.dag_all = dag_with_family_data(this.data.links, this.data.members, this.data.partnershipGroups);
         this.dag = undefined; // the part of the DAG that will be visualized
         // Find starting node and set node coordinates
         let node_of_dag_all = this.dag_all.find_node(this.data.start);
@@ -125,7 +125,7 @@ export class Familienbaum {
         if (!this.data.members) throw "No members in input";
         if (!this.data.start) throw "No starting node ID in input";
 
-        this.dag_all = dag_with_family_data(this.data.links, this.data.members);
+        this.dag_all = dag_with_family_data(this.data.links, this.data.members, this.data.partnershipGroups);
         this.dag = undefined;
 
         // 3. Restore visibility state
@@ -386,7 +386,7 @@ export class Familienbaum {
 
         // Create DAG on filtered edges
         this.dag_all.get_data_and_xy(this.dag as any); // if a filtered DAG exists, transfer data
-        this.dag = dag_with_family_data(links); // create on filtered links
+        this.dag = dag_with_family_data(links, this.data.members, this.data.partnershipGroups); // create on filtered links
         this.dag.get_data_and_xy(this.dag_all); // now transfer data from unfiltered DAG
         // Mark expandable nodes to be highlighted
         for (let node of this.dag.nodes()) {

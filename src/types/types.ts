@@ -26,6 +26,8 @@ export interface FamilyData {
     members: { [key: string]: Member };
     links: Array<[string, string]>; // Array of [sourceId, targetId]
     start: string;
+    /** Ordered person-node pairs that must remain adjacent in layout. */
+    partnershipGroups?: Record<string, [string, string]>;
 }
 
 /**

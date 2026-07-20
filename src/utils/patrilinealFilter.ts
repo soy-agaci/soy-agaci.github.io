@@ -5,7 +5,8 @@ export function filterPatrilineal(data: FamilyData): FamilyData {
     const filtered: FamilyData = {
         start: "", // Will be set after determining lineage
         members: {},
-        links: []
+        links: [],
+        partnershipGroups: data.partnershipGroups,
     };
 
     // Build parent-child relationships

@@ -186,13 +186,17 @@ export class DagLayout {
     }
 
     align_generation(generation_id: number, nodes: D3Node[]) {
-        // Helper to find the primary node (non-spouse) for a node
+        const generationMembers = new Set(nodes.filter(is_member).map(node => node.data));
+
+        // Partnership groups come from explicit union edges, not global person roles.
         const get_primary = (n: D3Node) => {
-            if (is_member(n) && n.added_data.input?.is_spouse) {
-                // Try to find the partner who is NOT a spouse
-                const partners = (this.dag as any).get_partners(n);
-                if (partners?.length) {
-                    return partners.find((p: D3Node) => !p.added_data.input?.is_spouse) ?? partners[0];
+            if (is_member(n)) {
+                const adjacentUnions = [...this.dag.parents(n), ...n.children!()];
+                for (const union of adjacentUnions) {
+                    const pair = this.dag.partnershipGroups[union.data];
+                    if (pair && pair.includes(n.data) && pair.every(id => generationMembers.has(id))) {
+                        return this.dag.find_node(pair[0]);
+                    }
                 }
             }
             return n;
@@ -378,14 +382,7 @@ export class DagLayout {
     align_to_parents(node: D3Node, parents: D3Node[]) {
         if (parents.length < 1) return;
 
-        // Prioritize alignment with the primary parent (non-spouse) to keep the main line straight
-        const primaryParent = parents.find(p => is_member(p) && !p.added_data.input?.is_spouse);
-
-        if (primaryParent) {
-            node.x = primaryParent.x;
-        } else {
-            node.x = this.get_average_x(parents)!;
-        }
+        node.x = this.get_average_x(parents)!;
     }
 
     get_average_x(objects: D3Node[]) {

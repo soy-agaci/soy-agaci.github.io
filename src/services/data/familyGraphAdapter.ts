@@ -100,6 +100,7 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
     }
 
     const partnershipByPair = new Map<string, FamilyGraph['partnerships'][number]>();
+    const partnershipGroups: Record<string, [string, string]> = {};
     const peopleInPartnerships = new Set<string>();
     for (const partnership of graph.partnerships) {
         const current = revision(partnership, proposalId);
@@ -109,6 +110,7 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
         peopleInPartnerships.add(partnership.person1_id);
         peopleInPartnerships.add(partnership.person2_id);
         const unionId = `u_partnership_${partnership.id}`;
+        partnershipGroups[unionId] = [personId(partnership.person1_id), personId(partnership.person2_id)];
         addLink(personId(partnership.person1_id), unionId);
         addLink(personId(partnership.person2_id), unionId);
         const marriage = current.date_text ?? current.date_start;
@@ -195,6 +197,7 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
         start: root ? personId(root) : '',
         members,
         links: [...links].sort().map(link => link.split('\0') as [string, string]),
+        partnershipGroups,
     };
 }
 

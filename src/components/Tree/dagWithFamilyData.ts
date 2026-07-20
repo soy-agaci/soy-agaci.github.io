@@ -3,8 +3,15 @@ import { D3Node, Member } from '../../types/types';
 import { FIELD_MAPPINGS } from '../../constants/fieldMappings';
 
 export class DagWithFamilyData extends DagWithRelations {
-    constructor(links: Array<[string, string]>, input_per_node_id: { [key: string]: Member } = {}) {
+    partnershipGroups: Record<string, [string, string]>;
+
+    constructor(
+        links: Array<[string, string]>,
+        input_per_node_id: { [key: string]: Member } = {},
+        partnershipGroups: Record<string, [string, string]> = {},
+    ) {
         super(links);
+        this.partnershipGroups = partnershipGroups;
         // Transfer input data if available
         for (let node of this.nodes()) {
             node.added_data = {
@@ -22,8 +29,12 @@ export class DagWithFamilyData extends DagWithRelations {
     }
 }
 
-export function dag_with_family_data(links: Array<[string, string]>, input_per_node_id: { [key: string]: Member } = {}) {
-    return new DagWithFamilyData(links, input_per_node_id);
+export function dag_with_family_data(
+    links: Array<[string, string]>,
+    input_per_node_id: { [key: string]: Member } = {},
+    partnershipGroups: Record<string, [string, string]> = {},
+) {
+    return new DagWithFamilyData(links, input_per_node_id, partnershipGroups);
 }
 
 /**
