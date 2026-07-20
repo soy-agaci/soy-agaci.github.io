@@ -310,13 +310,9 @@ describe('Google admin auth and review UI', () => {
         renderAdminDetail(container, detail);
         expect(container.querySelector('script,img,b')).toBeNull();
         expect(container.textContent).toContain('<script>alert(1)</script>');
-        expect(container.querySelectorAll('a')).toHaveLength(1);
-        expect(container.querySelector('a')?.rel).toBe('noopener noreferrer');
-        expect(container.querySelector('a')?.protocol).toBe('https:');
-        const headings = [...container.querySelectorAll('[role="columnheader"]')].map(node => node.textContent);
-        expect(headings).toEqual(expect.arrayContaining(['Base at submission', 'Current approved', 'Proposed']));
-        expect(container.textContent).toContain('Unavailable');
-        expect(container.textContent).toContain('Base');
+        expect(container.querySelectorAll('a')).toHaveLength(0);
+        expect(container.querySelectorAll('[role="columnheader"]')).toHaveLength(0);
+        expect(container.textContent).toContain('Kişi değişikliği');
         expect(container.textContent).toContain('Current');
     });
 });

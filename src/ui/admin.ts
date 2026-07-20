@@ -45,24 +45,24 @@ export async function signInWithGoogle() {
         provider: 'google',
         options: { redirectTo: googleRedirectTo(window.location) },
     });
-    rpcError('Google sign-in could not start', error);
+    rpcError('Google ile giriş başlatılamadı', error);
 }
 
 export async function loadAdminProfile() {
     const { data, error } = await getSupabaseClient().rpc('get_admin_profile');
-    rpcError('Admin access check failed', error);
+    rpcError('Yönetici yetkisi kontrol edilemedi', error);
     return data as unknown as AdminProfile;
 }
 
 export async function acceptAdminInvitation() {
     const { data, error } = await getSupabaseClient().rpc('accept_admin_invitation');
-    rpcError('Admin invitation check failed', error);
+    rpcError('Yönetici daveti kontrol edilemedi', error);
     return data as unknown as { is_admin: boolean };
 }
 
 export async function loadAdminInvitations() {
     const { data, error } = await getSupabaseClient().rpc('list_admin_invitations');
-    rpcError('Admin invitations could not be loaded', error);
+    rpcError('Yönetici davetleri yüklenemedi', error);
     return data as unknown as AdminInvitation[];
 }
 
@@ -70,13 +70,13 @@ export async function createAdminInvitation(email: string, expiresAt?: string) {
     const { data, error } = await getSupabaseClient().rpc('create_admin_invitation', {
         p_email: email, ...(expiresAt ? { p_expires_at: expiresAt } : {}),
     });
-    rpcError('Admin invitation could not be created', error);
+    rpcError('Yönetici daveti oluşturulamadı', error);
     return data as unknown as AdminInvitation;
 }
 
 export async function revokeAdminInvitation(id: string) {
     const { data, error } = await getSupabaseClient().rpc('revoke_admin_invitation', { p_invitation_id: id });
-    rpcError('Admin invitation could not be revoked', error);
+    rpcError('Yönetici daveti geri çekilemedi', error);
     return data as JsonObject;
 }
 
@@ -84,13 +84,13 @@ export async function loadReviewQueue(cursor?: { created_at: string; id: string 
     const { data, error } = await getSupabaseClient().rpc('list_pending_admin_submissions', cursor ? {
         p_after_created_at: cursor.created_at, p_after_id: cursor.id,
     } : {});
-    rpcError('Review queue could not be loaded', error);
+    rpcError('İnceleme listesi yüklenemedi', error);
     return data as unknown as QueuePage;
 }
 
 export async function loadReviewDetail(id: string) {
     const { data, error } = await getSupabaseClient().rpc('get_admin_submission', { p_submission_id: id });
-    rpcError('Submission could not be loaded', error);
+    rpcError('Gönderim yüklenemedi', error);
     return data as unknown as AdminDetail;
 }
 
@@ -98,7 +98,7 @@ export async function moderateSubmission(id: string, decision: 'approve' | 'reje
     const { data, error } = await getSupabaseClient().rpc(`${decision}_family_submission`, {
         p_submission_id: id, ...(note ? { p_review_note: note } : {}),
     });
-    rpcError('Submission is stale or could not be reviewed', error);
+    rpcError('Gönderim güncel değil veya incelenemedi', error);
     return data as JsonObject;
 }
 
@@ -119,7 +119,7 @@ function safeLink(url: unknown) {
 function valueCell(value: unknown, available = true, link = false) {
     const cell = document.createElement('span');
     cell.setAttribute('role', 'cell');
-    if (!available) cell.textContent = 'Unavailable';
+    if (!available) cell.textContent = 'Yok';
     else if (link) {
         const safe = safeLink(value);
         if (safe) cell.append(safe); else cell.textContent = text(value);
@@ -127,12 +127,20 @@ function valueCell(value: unknown, available = true, link = false) {
     return cell;
 }
 
+const labels: Record<string, string> = {
+    display_name: 'Ad soyad', given_name: 'Ad', family_name: 'Soyad', gender: 'Cinsiyet',
+    birth_date: 'Doğum tarihi', birthplace: 'Doğum yeri', death_date: 'Ölüm tarihi', death_place: 'Ölüm yeri',
+    occupation: 'Meslek', summary: 'Not', certainty: 'Kesinlik',
+    date_text: 'Tarih', place_text: 'Yer', details: 'Açıklama', relationship_type: 'İlişki',
+    partnership_type: 'İlişki türü', status_text: 'Durum', url: 'Bağlantı', caption: 'Açıklama',
+};
+
 function row(label: string, base: JsonObject | null, current: JsonObject | null, proposed: JsonObject) {
     const item = document.createElement('div');
     item.className = 'admin-diff-row';
     item.setAttribute('role', 'row');
     const name = document.createElement('strong');
-    name.textContent = label;
+        name.textContent = labels[label] ?? label;
     name.setAttribute('role', 'rowheader');
     item.append(
         name,
@@ -148,15 +156,15 @@ function renderRevision(group: string, entry: RevisionEntry) {
     const section = document.createElement('section');
     section.className = 'admin-revision';
     const heading = document.createElement('h3');
-    heading.textContent = group;
+    heading.textContent = ({ events: 'Olaylar', partnerships: 'Eşleşmeler', parent_links: 'Ebeveyn bağları', memberships: 'Aile üyelikleri' } as Record<string, string>)[group] ?? group;
     const table = document.createElement('div');
     table.className = 'admin-diff';
     table.setAttribute('role', 'table');
-    table.setAttribute('aria-label', `${group} revision comparison`);
+    table.setAttribute('aria-label', 'Değişiklik karşılaştırması');
     const columns = document.createElement('div');
     columns.className = 'admin-diff-headings';
     columns.setAttribute('role', 'row');
-    for (const label of ['Field', 'Base at submission', 'Current approved', 'Proposed']) {
+    for (const label of ['Alan', 'Eski', 'Mevcut', 'Yeni']) {
         const column = document.createElement('strong');
         column.setAttribute('role', 'columnheader');
         column.textContent = label;
@@ -175,6 +183,54 @@ function renderRevision(group: string, entry: RevisionEntry) {
     return section;
 }
 
+function personName(value: JsonObject | null) {
+    if (!value) return '—';
+    return text(value.display_name ?? [value.given_name, value.family_name].filter(Boolean).join(' '));
+}
+
+function mediaUrl(value: JsonObject | null) {
+    if (!value) return null;
+    return value.url ?? value.legacy_uri ?? value.storage_path;
+}
+
+function photo(value: JsonObject | null, old: boolean) {
+    const wrap = document.createElement('div');
+    wrap.className = `admin-photo ${old ? 'admin-photo-old' : 'admin-photo-new'}`;
+    const url = mediaUrl(value);
+    if (typeof url === 'string' && url.startsWith('https://')) {
+        const image = document.createElement('img'); image.src = url; image.alt = old ? 'Eski fotoğraf' : 'Yeni fotoğraf'; wrap.append(image);
+    } else wrap.textContent = 'Fotoğraf yok';
+    if (old && value) { const mark = document.createElement('span'); mark.className = 'admin-photo-delete'; mark.textContent = '×'; mark.setAttribute('aria-label', 'Silinecek'); wrap.append(mark); }
+    return wrap;
+}
+
+function renderPerson(entry: RevisionEntry) {
+    const section = document.createElement('section'); section.className = 'admin-person-change';
+    const old = entry.current ?? entry.base;
+    const title = document.createElement('h3'); title.textContent = 'Kişi değişikliği'; section.append(title);
+    const names = document.createElement('div'); names.className = 'admin-name-change';
+    const oldName = document.createElement('del'); oldName.textContent = personName(old);
+    const newName = document.createElement('strong'); newName.textContent = personName(entry.proposed);
+    names.append(oldName, newName); section.append(names);
+    const fields = document.createElement('div'); fields.className = 'admin-person-fields';
+    for (const key of ['gender', 'birth_date', 'birthplace', 'death_date', 'death_place', 'occupation', 'summary']) {
+        if (JSON.stringify(old?.[key]) === JSON.stringify(entry.proposed[key])) continue;
+        const line = document.createElement('div'); line.append(document.createElement('span'));
+        line.firstChild!.textContent = labels[key] ?? key;
+        line.append(valueCell(old?.[key], old !== null), valueCell(entry.proposed[key])); fields.append(line);
+    }
+    if (fields.childElementCount) section.append(fields);
+    return section;
+}
+
+function renderMedia(entry: RevisionEntry) {
+    const section = document.createElement('section'); section.className = 'admin-media-change';
+    const title = document.createElement('h3'); title.textContent = 'Fotoğraf değişikliği'; section.append(title);
+    const comparison = document.createElement('div'); comparison.className = 'admin-photo-comparison';
+    comparison.append(photo(entry.current ?? entry.base, true), document.createTextNode('→'), photo(entry.proposed, false));
+    section.append(comparison); return section;
+}
+
 export function renderAdminDetail(container: HTMLElement, detail: AdminDetail) {
     container.replaceChildren();
     const { submission, family } = detail;
@@ -185,13 +241,8 @@ export function renderAdminDetail(container: HTMLElement, detail: AdminDetail) {
         item.append(name, document.createTextNode(text(value)));
         return item;
     };
-    container.append(
-        metadata('Aile', family.name),
-        metadata('Gönderim', new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(String(submission.created_at)))),
-        metadata('Gönderen', submission.submitter_name),
-        metadata('İletişim', submission.submitter_contact),
-        metadata('Not', submission.message),
-    );
+    container.append(metadata('Aile', family.name));
+    if (submission.submitter_name || submission.message) container.append(metadata('Gönderen', submission.submitter_name ?? submission.message));
     if (detail.family_creation) {
         container.append(
             metadata('Önerilen aile', detail.family_creation.name),
@@ -201,8 +252,11 @@ export function renderAdminDetail(container: HTMLElement, detail: AdminDetail) {
             metadata('Değişiklik', 'Yeni aile ve onaylı kök üyeliği'),
         );
     }
+    for (const entry of detail.people) container.append(renderPerson(entry));
+    for (const entry of detail.media) container.append(renderMedia(entry));
     for (const [group, value] of Object.entries(detail)) {
         if (!Array.isArray(value)) continue;
+        if (group === 'people' || group === 'media' || group === 'sources') continue;
         for (const entry of value) container.append(renderRevision(group, entry as RevisionEntry));
     }
 }
@@ -244,7 +298,7 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
         signIn.onclick = async () => {
             signIn.disabled = true;
             try { await signInWithGoogle(); } catch (error) {
-                setStatus(error instanceof Error ? error.message : 'Google sign-in failed.', true);
+                setStatus(error instanceof Error ? error.message : 'Google ile giriş yapılamadı.', true);
                 signIn.disabled = false;
             }
         };
@@ -260,11 +314,11 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
             logout.disabled = true;
             try {
                 const { error } = await getSupabaseClient().auth.signOut();
-                rpcError('Sign-out failed', error);
+                rpcError('Çıkış yapılamadı', error);
                 dialog.close();
             } catch (error) {
                 logout.disabled = false;
-                setStatus(error instanceof Error ? error.message : 'Sign-out failed.', true);
+                setStatus(error instanceof Error ? error.message : 'Çıkış yapılamadı.', true);
             }
         };
         return logout;
@@ -326,7 +380,7 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
                 const details = document.createElement('div');
                 const address = document.createElement('strong'); address.textContent = invitation.email;
                 const meta = document.createElement('span');
-                meta.textContent = `${invitation.status} · ${new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(new Date(invitation.expires_at))}`;
+                meta.textContent = ({ pending: 'Bekliyor', accepted: 'Kabul edildi', revoked: 'Geri çekildi', expired: 'Süresi doldu' } as Record<string, string>)[invitation.status];
                 details.append(address, meta); row.append(details);
                 if (invitation.status === 'pending') {
                     const revoke = document.createElement('button');
@@ -366,7 +420,7 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
                 ? `${item.proposed_family_name} · ${item.family_name}`
                 : item.family_name;
             const meta = document.createElement('span');
-            meta.textContent = `${new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.created_at))} · ${item.entity_count} değişiklik`;
+            meta.textContent = `${item.entity_count} değişiklik`;
             entry.append(name, meta);
             entry.onclick = () => void showDetail(item.id);
             content.append(entry);
@@ -488,16 +542,16 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
     dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
     const oauthError = new URLSearchParams(window.location.search).get('error_description');
     getSupabaseClient().auth.getSession().then(async ({ data, error }) => {
-        rpcError('Session restore failed', error);
+            rpcError('Oturum geri yüklenemedi', error);
         await applySession(data.session);
         if (oauthError) {
             dialog.showModal();
-            setStatus(`Google sign-in failed: ${oauthError}`, true);
+            setStatus(`Google ile giriş yapılamadı: ${oauthError}`, true);
         }
     }).catch(error => {
         renderSignedOut();
         dialog.showModal();
-        setStatus(error instanceof Error ? error.message : 'Session restore failed.', true);
+        setStatus(error instanceof Error ? error.message : 'Oturum geri yüklenemedi.', true);
     });
     getSupabaseClient().auth.onAuthStateChange((_event: AuthChangeEvent, next) => { void applySession(next); });
 }
