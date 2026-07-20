@@ -259,6 +259,76 @@ describe('family graph renderer adapter', () => {
             `person_${ids.a}`,
         ]));
     });
+
+    it('correctly marks spouse as is_spouse=true even when the spouse has parents from another lineage', () => {
+        const base = graph();
+        const spouseId = '20000000-0000-4000-8000-000000000090';
+        const spouseParentId = '20000000-0000-4000-8000-000000000091';
+        const pLink = (id: string, parent_id: string, child_id: string) => ({
+            id, parent_id, child_id, created_at,
+            current_revision: {
+                ...revisionBase, id: id.replace('40000000', '41000000'), status: 'approved' as const,
+                relationship_type: 'biological' as const, certainty: 1,
+            },
+            pending_revisions: [],
+        });
+        const person = (id: string, name: string, gender: string) => ({
+            id, created_at,
+            current_revision: {
+                ...revisionBase, id: id.replace('20000000', '21000000'), status: 'approved' as const,
+                given_name: name, middle_names: null, family_name: 'Other', display_name: `${name} Other`,
+                aliases: [], gender, is_living: true, summary: null, privacy: 'public' as const,
+            },
+            pending_revisions: [],
+        });
+        const partner = (id: string, person1_id: string, person2_id: string, primary_person_id: string = person1_id) => ({
+            id, person1_id, person2_id, created_at,
+            current_revision: {
+                ...revisionBase, id: id.replace('30000000', '31000000'), status: 'approved' as const,
+                partnership_type: 'marriage' as const, primary_person_id, date_start: null, date_end: null, date_text: null, status_text: null,
+            },
+            pending_revisions: [],
+        });
+
+        // ids.a is root of family1 (Alpha). ids.c is child of Alpha.
+        // spouseId is married to ids.a, AND spouseId is daughter of spouseParentId.
+        base.people.push(person(spouseId, 'SpouseWithParents', 'female'));
+        base.people.push(person(spouseParentId, 'SpouseParent', 'male'));
+        base.parent_links.push(pLink('40000000-0000-4000-8000-000000000099', spouseParentId, spouseId));
+        base.partnerships.push(partner('30000000-0000-4000-8000-000000000099', ids.a, spouseId, ids.a));
+
+        const data = familyGraphToFamilyData(base);
+        // Alpha (ids.a) is root descendant, so Alpha.is_spouse is false
+        expect(data.members[`person_${ids.a}`].is_spouse).toBe(false);
+        // SpouseWithParents (spouseId) is married to Alpha but not a descendant of family root, so is_spouse is true
+        expect(data.members[`person_${spouseId}`].is_spouse).toBe(true);
+    });
+
+    it('uses explicit primary_person_id from database when present on partnership revision', () => {
+        const base = graph();
+        const p1 = ids.c;
+        const p2 = ids.d;
+        base.partnerships = [{
+            id: '30000000-0000-4000-8000-000000000099',
+            person1_id: p1 < p2 ? p1 : p2,
+            person2_id: p1 < p2 ? p2 : p1,
+            created_at,
+            current_revision: {
+                ...revisionBase,
+                id: '31000000-0000-4000-8000-000000000099',
+                status: 'approved' as const,
+                partnership_type: 'marriage' as const,
+                primary_person_id: p2, // Explicitly declare p2 as primary member
+                date_start: null, date_end: null, date_text: null, status_text: null,
+            },
+            pending_revisions: [],
+        }];
+
+        const data = familyGraphToFamilyData(base);
+        // Since p2 is explicit primary_person_id, p1 is explicitly marked as spouse
+        expect(data.members[`person_${p1}`].is_spouse).toBe(true);
+        expect(data.members[`person_${p2}`].is_spouse).toBe(false);
+    });
 });
 
 describe('family graph read orchestration', () => {

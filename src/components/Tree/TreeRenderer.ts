@@ -15,6 +15,8 @@ export class TreeRenderer {
     onEditClick: (node: D3Node) => void;
 
     private clickTimer: any = null;
+    private longPressTimer: any = null;
+    private suppressClick = false;
 
     constructor(
         g: d3.Selection<SVGGElement, unknown, HTMLElement, any>,
@@ -65,6 +67,7 @@ export class TreeRenderer {
             .attr("aria-label", node => is_member(node) ? `Kişiyi aç: ${get_name(node)}` : null)
             .on("click", (event, node) => {
                 if (event.defaultPrevented) return;
+                if (that.suppressClick) { that.suppressClick = false; return; }
                 
                 // Debounce click to allow dblclick to cancel it
                 if (that.clickTimer) {
@@ -88,6 +91,17 @@ export class TreeRenderer {
                 }
                 
                 that.onNodeDblClick(node);
+            })
+            .on("pointerdown", (event, node) => {
+                if (event.pointerType !== 'touch') return;
+                that.longPressTimer = setTimeout(() => {
+                    that.longPressTimer = null;
+                    that.suppressClick = true;
+                    that.onNodeDblClick(node);
+                }, 600);
+            })
+            .on("pointerup pointercancel pointerleave", () => {
+                if (that.longPressTimer) { clearTimeout(that.longPressTimer); that.longPressTimer = null; }
             })
             .on("keydown", (event, node) => {
                 if (!is_member(node) || event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;

@@ -156,8 +156,21 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
     const root = graph.families.find(family => family.root_person_id && visiblePeople.has(family.root_person_id))?.root_person_id
         ?? [...visiblePeople].sort()[0];
 
+    const isSpouseMap = new Set<string>();
+    for (const partnership of graph.partnerships) {
+        const p1 = partnership.person1_id;
+        const p2 = partnership.person2_id;
+        if (!visiblePeople.has(p1) || !visiblePeople.has(p2)) continue;
+
+        const current = revision(partnership, proposalId);
+        if (current?.primary_person_id && (current.primary_person_id === p1 || current.primary_person_id === p2)) {
+            const spouseId = current.primary_person_id === p1 ? p2 : p1;
+            isSpouseMap.add(spouseId);
+        }
+    }
+
     for (const id of visiblePeople) {
-        members[personId(id)].is_spouse = id !== root && peopleInPartnerships.has(id) && !parentsByChild.has(id);
+        members[personId(id)].is_spouse = id !== root && isSpouseMap.has(id);
     }
 
     return {

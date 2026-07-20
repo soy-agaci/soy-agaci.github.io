@@ -17,6 +17,8 @@ export class Familienbaum {
     layout: DagLayout | undefined;
     editing_div: any; // Placeholder for editor
     renderer: TreeRenderer;
+    private viewAnchorId: string | null = null;
+    private viewMode = -1;
 
     // Callbacks
     onViewChange?: () => void;
@@ -45,7 +47,7 @@ export class Familienbaum {
         // Initialize Renderer
         this.renderer = new TreeRenderer(
             this.g,
-            (node, event) => this.handleNodeClick(node, event),
+            (node) => this.handleNodeClick(node),
             (node) => this.handleNodeDblClick(node),
             (node) => this.handleEditClick(node)
         );
@@ -177,27 +179,15 @@ export class Familienbaum {
         this.draw(false);
     }
 
-    handleNodeClick(node: D3Node, event: any) {
-        // Check if sidebar is open
+    handleNodeClick(node: D3Node) {
+        if (!is_member(node)) return;
         const sidebar = document.getElementById('family-sidebar');
         const sidebarIsOpen = sidebar && sidebar.classList.contains('active');
-
-        // If sidebar is open (with or without shift key), switch to that person
         if (sidebarIsOpen) {
             this.handleEditClick(node);
             return;
         }
-
-        // Check for Shift key when sidebar is closed
-        if (event.shiftKey) {
-            this.handleEditClick(node);
-            return;
-        }
-
-        // Only expand/collapse on circle click when sidebar is closed and no shift key
         this.click(node.data);
-        // this.draw(false, node.data); // Don't recenter on expand/collapse to prevent drift
-        // Draw is called inside click logic now
     }
 
     handleEditClick(node: D3Node) {
@@ -209,57 +199,72 @@ export class Familienbaum {
     }
 
     handleNodeDblClick(node: D3Node) {
-        let node_of_dag_all = this.dag_all.find_node(node.data);
-
-        // 1. Hide everything
-        for (let n of this.dag_all.nodes()) {
-            n.added_data.is_visible = false;
-        }
-
-        // 2. Show current node
-        node_of_dag_all.added_data.is_visible = true;
-
-        // 3. Show Ancestors
-        let parents = Array.from(this.dag_all.parents(node_of_dag_all));
-        while (parents.length > 0) {
-            let parent = parents.pop()!;
-            parent.added_data.is_visible = true;
-            parents = parents.concat(this.dag_all.parents(parent));
-        }
-
-        // 4. Show Descendants
-        let children = Array.from(node_of_dag_all.children!());
-
-        // Show spouses (parents of the unions) for the clicked node
-        for (let u of children) {
-            let unionParents = this.dag_all.parents(u);
-            for (let p of unionParents) {
-                p.added_data.is_visible = true;
-            }
-        }
-
-        while (children.length > 0) {
-            let child = children.pop()!;
-            child.added_data.is_visible = true;
-            children = children.concat(Array.from(child.children!()));
-        }
-
-        this.draw(true, node.data);
+        this.handleEditClick(node);
     }
 
     click(current_node_id: string) {
-        // First find the clicked node
-        let node_of_dag_all = this.dag_all.find_node(current_node_id);
-        
-        if (this.is_expandable_downwards(node_of_dag_all)) {
-            // Expand: Show immediate descendants (Unions, Spouses, Children)
-            this.showDescendants(node_of_dag_all);
+        const node = this.dag_all.find_node(current_node_id);
+        if (!is_member(node)) return;
+        if (this.viewAnchorId !== current_node_id) {
+            this.viewAnchorId = current_node_id;
+            this.viewMode = 0;
         } else {
-            // Collapse: Hide descendants recursively
-            this.hideDescendants(node_of_dag_all);
+            this.viewMode = (this.viewMode + 1) % 5;
         }
-        
-        this.draw(false, current_node_id); // Don't recenter on expand/collapse to prevent drift
+        this.applyView(node);
+    }
+
+    private clearView() {
+        for (const node of this.dag_all.nodes()) node.added_data.is_visible = false;
+    }
+
+    private showAncestors(node: D3Node) {
+        const queue = [node];
+        const visited = new Set<string>();
+        while (queue.length) {
+            const child = queue.shift()!;
+            if (visited.has(child.data)) continue;
+            visited.add(child.data); child.added_data.is_visible = true;
+            for (const union of this.dag_all.parents(child)) {
+                union.added_data.is_visible = true;
+                for (const parent of this.dag_all.parents(union)) {
+                    parent.added_data.is_visible = true;
+                    if (parent.data !== child.data) queue.push(parent);
+                }
+            }
+        }
+    }
+
+    private showImmediateFamily(node: D3Node) {
+        node.added_data.is_visible = true;
+        for (const union of node.children ? node.children() : []) {
+            union.added_data.is_visible = true;
+            for (const spouse of this.dag_all.parents(union)) spouse.added_data.is_visible = true;
+            for (const child of union.children ? union.children() : []) child.added_data.is_visible = true;
+        }
+    }
+
+    private showAllDescendants(node: D3Node) {
+        const queue = [node];
+        while (queue.length) {
+            const parent = queue.shift()!;
+            parent.added_data.is_visible = true;
+            for (const union of parent.children ? parent.children() : []) {
+                union.added_data.is_visible = true;
+                for (const spouse of this.dag_all.parents(union)) spouse.added_data.is_visible = true;
+                for (const child of union.children ? union.children() : []) queue.push(child);
+            }
+        }
+    }
+
+    private applyView(node: D3Node) {
+        this.clearView();
+        if (this.viewMode === 0) this.showAncestors(node);
+        if (this.viewMode === 1) { this.showAncestors(node); this.showImmediateFamily(node); }
+        if (this.viewMode === 2) { this.showAncestors(node); this.showAllDescendants(node); }
+        if (this.viewMode === 3) this.showAllDescendants(node);
+        if (this.viewMode === 4) this.showImmediateFamily(node);
+        this.draw(true, node.data);
     }
 
     showDescendants(node: D3Node) {
