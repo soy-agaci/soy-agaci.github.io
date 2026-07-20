@@ -19,17 +19,24 @@ export class Familienbaum {
     renderer: TreeRenderer;
     private viewAnchorId: string | null = null;
     private viewMode = -1;
+    private paternalAncestorsOnly: boolean;
 
     // Callbacks
     onViewChange?: () => void;
     create_editing_form?: (node: D3Node, node_all: D3Node) => void;
     create_info_form?: () => void;
 
-    constructor(input: FamilyData, svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>, onViewChange?: () => void) {
+    constructor(
+        input: FamilyData,
+        svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>,
+        onViewChange?: () => void,
+        paternalAncestorsOnly = false,
+    ) {
         // Remember the inputs
         this.data = input;
         this.svg = svg;
         this.onViewChange = onViewChange;
+        this.paternalAncestorsOnly = paternalAncestorsOnly;
 
         // Prepare things related to d3 and SVG
         this.g = this.svg.append("g");
@@ -202,6 +209,10 @@ export class Familienbaum {
         this.handleEditClick(node);
     }
 
+    setPaternalAncestorsOnly(value: boolean) {
+        this.paternalAncestorsOnly = value;
+    }
+
     click(current_node_id: string) {
         const node = this.dag_all.find_node(current_node_id);
         if (!is_member(node)) return;
@@ -227,7 +238,11 @@ export class Familienbaum {
             visited.add(child.data); child.added_data.is_visible = true;
             for (const union of this.dag_all.parents(child)) {
                 union.added_data.is_visible = true;
-                for (const parent of this.dag_all.parents(union)) {
+                const parents = this.dag_all.parents(union);
+                const ancestors = this.paternalAncestorsOnly
+                    ? parents.filter(parent => parent.added_data.input?.gender === 'E')
+                    : parents;
+                for (const parent of ancestors) {
                     parent.added_data.is_visible = true;
                     if (parent.data !== child.data) queue.push(parent);
                 }
