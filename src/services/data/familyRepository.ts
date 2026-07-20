@@ -71,6 +71,8 @@ const partnershipRevisionSchema = z.object({
     ...revisionBase,
     status: z.enum(['approved', 'pending']),
     partnership_type: z.enum(['marriage', 'civil_union', 'domestic_partnership', 'other']),
+    // Legacy remote migrations may still return this field; rendering does not use it.
+    primary_person_id: nullableUuid.optional(),
     date_start: nullableString,
     date_end: nullableString,
     date_text: nullableString,
