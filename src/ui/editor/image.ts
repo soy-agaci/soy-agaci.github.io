@@ -1,6 +1,7 @@
 import * as d3 from 'd3';
 import { D3Node } from '../../types/types';
 import { UPLOAD_SCRIPT_URL, COLUMN_MAPPING } from './config';
+import { getSupabaseClient } from '../../services/supabase/client';
 
 // Declare Cropper global
 declare class Cropper {
@@ -17,6 +18,14 @@ export function getBase64(file: File): Promise<string> {
         reader.onload = () => resolve((reader.result as string).split(',')[1]); // Remove data URI prefix
         reader.onerror = error => reject(error);
     });
+}
+
+export async function uploadPhotoAndGetUrl(file: File): Promise<string> {
+    const path = `${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
+    const storage = getSupabaseClient().storage.from('media');
+    const { error } = await storage.upload(path, file, { contentType: file.type, upsert: false });
+    if (error) throw error;
+    return storage.getPublicUrl(path).data.publicUrl;
 }
 
 export async function uploadPhoto(file: File, node: D3Node) {

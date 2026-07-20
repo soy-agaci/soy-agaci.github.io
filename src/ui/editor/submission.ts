@@ -18,12 +18,7 @@ export type PersonFields = {
     occupation: string;
     marriage: string;
     note: string;
-    source_title?: string;
-    source_url?: string;
-    source_citation?: string;
     media_url?: string;
-    media_type?: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
-    media_caption?: string;
 };
 
 type IdFactory = () => string;
@@ -127,20 +122,13 @@ function events(graph: FamilyGraph, personRef: string, fields: PersonFields, id:
     ].filter(Boolean) as NonNullable<FamilyEditBundle['events']>;
 }
 
-function extras(fields: PersonFields, personRef: string): Pick<FamilyEditBundle, 'sources' | 'media'> {
-    const source = fields.source_title?.trim();
+function extras(fields: PersonFields, personRef: string): Pick<FamilyEditBundle, 'media'> {
     const mediaUrl = fields.media_url?.trim();
     return {
-        ...(source ? { sources: [compact({
-            title: source,
-            url: fields.source_url?.trim() ?? '',
-            citation: fields.source_citation?.trim() ?? '',
-        })] } : {}),
         ...(mediaUrl ? { media: [compact({
             person_ref: personRef,
             url: mediaUrl,
-            mime_type: fields.media_type ?? 'image/jpeg',
-            caption: fields.media_caption?.trim() ?? '',
+            mime_type: 'image/jpeg',
         })] } : {}),
     };
 }

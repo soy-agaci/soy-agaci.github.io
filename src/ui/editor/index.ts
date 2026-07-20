@@ -1,6 +1,8 @@
 import type { Familienbaum } from '../../components/Tree/Familienbaum';
 import type { D3Node } from '../../types/types';
 import type { FamilyGraph, PublicFamily, SubmissionResult } from '../../services/data/familyRepository';
+import { get_name, is_member } from '../../components/Tree/dagWithFamilyData';
+import { initImageCropper, uploadPhotoAndGetUrl } from './image';
 import {
     displayDate,
     FamilyCreationSubmitter,
@@ -122,7 +124,7 @@ function addInput(container: HTMLElement, key: keyof PersonFields, label: string
 
 function addPersonFields(container: HTMLElement, values: PersonFields, prefix = '') {
     for (const [key, label, type] of fieldDefinitions) {
-        if (prefix && ['marriage', 'source_title', 'source_url', 'source_citation', 'media_url', 'media_type', 'media_caption'].includes(key)) continue;
+        if (prefix && key === 'marriage') continue;
         addInput(container, `${prefix}${key}` as keyof PersonFields, label, type, values[key] ?? '');
     }
 }
@@ -134,29 +136,13 @@ function readPerson(form: HTMLFormElement, prefix = ''): PersonFields {
         first_name: value('first_name'), last_name: value('last_name'), gender: value('gender'),
         birth_date: value('birth_date'), birthplace: value('birthplace'), death_date: value('death_date'),
         death_place: value('death_place'), occupation: value('occupation'), marriage: value('marriage'), note: value('note'),
-        source_title: value('source_title'), source_url: value('source_url'), source_citation: value('source_citation'),
-        media_url: value('media_url'), media_type: (value('media_type') || 'image/jpeg') as PersonFields['media_type'],
-        media_caption: value('media_caption'),
+        media_url: value('media_url'),
     };
 }
 
-function addExtras(form: HTMLFormElement) {
-    const details = document.createElement('details');
-    details.className = 'editor-extras';
-    const summary = document.createElement('summary');
-    summary.textContent = 'Kaynak / medya';
-    details.append(summary);
-    addInput(details, 'source_title', 'Kaynak başlığı', 'text');
-    addInput(details, 'source_url', 'Kaynak HTTPS adresi', 'text');
-    addInput(details, 'source_citation', 'Kaynak notu', 'text');
-    addInput(details, 'media_url', 'Görsel HTTPS adresi', 'text');
-    const type = document.createElement('select');
-    type.name = 'media_type';
-    type.className = 'sidebar-input';
-    for (const mime of ['image/jpeg', 'image/png', 'image/webp', 'image/gif']) type.add(new Option(mime, mime));
-    details.append(type);
-    addInput(details, 'media_caption', 'Görsel açıklaması', 'text');
-    form.append(details);
+function addPhotoInput(form: HTMLFormElement) {
+    const input = document.createElement('input'); input.type = 'hidden'; input.name = 'media_url'; form.append(input);
+    const hint = document.createElement('p'); hint.className = 'family-creation-context'; hint.textContent = 'Fotoğrafı yüklemek için üstteki görsele tıklayın.'; form.append(hint);
 }
 
 function editableFamilies(graph: FamilyGraph, id: string, families: PublicFamily[]): PublicFamily[] {
@@ -190,6 +176,11 @@ function statusElement(form: HTMLFormElement) {
 export function initEditor(tree: Familienbaum, context: EditorContext) {
     const submitter = new FamilyEditSubmitter();
     const familyCreationSubmitter = new FamilyCreationSubmitter();
+    initImageCropper(file => {
+        const input = document.querySelector('input[name="media_url"]') as HTMLInputElement | null;
+        if (!input) return;
+        void uploadPhotoAndGetUrl(file).then(url => { input.value = url; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    });
 
     tree.create_editing_form = (node: D3Node, nodeAll: D3Node) => {
         const sidebar = document.getElementById('family-sidebar');
@@ -214,9 +205,10 @@ export function initEditor(tree: Familienbaum, context: EditorContext) {
         }
         openEditorSidebar(sidebar);
 
-        const render = (mode: 'profile' | 'spouse' | 'child' | 'family') => {
+        const render = (mode: 'profile' | 'spouse' | 'child' | 'family' | 'photo') => {
             const attempt = new FamilyEditAttempt(submitter);
             details.replaceChildren();
+            if (image) image.onclick = mode === 'profile' || mode === 'photo' ? () => { render('photo'); (document.getElementById('image-upload-input') as HTMLInputElement | null)?.click(); } : null;
             if (mode === 'profile') {
                 const modeActions = document.createElement('div');
                 modeActions.className = 'editor-mode-actions';
@@ -237,6 +229,11 @@ export function initEditor(tree: Familienbaum, context: EditorContext) {
                 family.onclick = () => render('family');
                 modeActions.append(spouse, child, family);
                 details.append(modeActions);
+                const path = document.createElement('section');
+                const target = document.createElement('select'); target.className = 'sidebar-input'; target.add(new Option('Hedef kişi seçin', ''));
+                for (const n of tree.dag_all.nodes().filter(n => is_member(n))) target.add(new Option(get_name(n), n.data));
+                const find = document.createElement('button'); find.type = 'button'; find.className = 'action-btn btn-primary'; find.textContent = 'En Kısa Yol Bul';
+                find.onclick = () => target.value && tree.findPath(nodeAll.data, target.value); path.append(target, find); details.append(path);
             }
             if (mode === 'family') {
                 const form = document.createElement('form');
@@ -295,7 +292,7 @@ export function initEditor(tree: Familienbaum, context: EditorContext) {
             form.className = 'edit-form';
             form.noValidate = true;
             addFamilySelect(form, families);
-            addPersonFields(form, mode === 'profile' ? values : { ...blankPerson(), last_name: values.last_name });
+            if (mode === 'photo') addPhotoInput(form); else addPersonFields(form, mode === 'profile' ? values : { ...blankPerson(), last_name: values.last_name });
             if (mode === 'profile') {
                 const partnership = graph.partnerships.filter(candidate => candidate.current_revision
                     && [candidate.person1_id, candidate.person2_id].includes(selectedId));
@@ -336,7 +333,6 @@ export function initEditor(tree: Familienbaum, context: EditorContext) {
                 form.append(newParent);
                 select.onchange = () => { newParent.hidden = select.value !== 'new'; };
             }
-            addExtras(form);
             const actions = document.createElement('div');
             actions.className = 'editor-actions';
             const cancel = document.createElement('button');

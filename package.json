@@ -5,9 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest",
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "tsc && vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --host",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:status": "supabase status",
@@ -16,6 +16,8 @@
     "verify:local": "bash scripts/test-step7-local.sh",
     "test:local-step7": "npm run verify:local",
     "import:sheet": "tsx tools/import-sheet.ts",
+    "import:unify": "tsx tools/import-and-unify.ts",
+    "unify:person": "tsx tools/unify-people.ts",
     "admin": "tsx tools/admin.ts"
   },
   "repository": {

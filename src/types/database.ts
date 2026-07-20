@@ -1134,6 +1134,22 @@ export type Database = {
         }
         Returns: Json
       }
+      unify_person: {
+        Args: {
+          p_source_person_id: string
+          p_target_person_id: string
+        }
+        Returns: Json
+      }
+      unify_person_by_legacy_id: {
+        Args: {
+          p_source_family_slug: string
+          p_source_legacy_id: string
+          p_target_family_slug: string
+          p_target_legacy_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       life_event_type:

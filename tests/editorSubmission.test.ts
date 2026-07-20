@@ -112,8 +112,8 @@ describe('editor bundle mapping', () => {
             expect.objectContaining({ event_type: 'occupation', details: 'Engineer' }),
         ]));
         expect(bundle.events?.[0]).not.toHaveProperty('date_start');
-        expect(bundle.sources?.[0]).toMatchObject({ title: 'Registry', url: 'https://example.test/source' });
-        expect(bundle.media?.[0]).toMatchObject({ person_ref: ids.parent1, mime_type: 'image/webp' });
+        expect(bundle.sources).toBeUndefined();
+        expect(bundle.media?.[0]).toMatchObject({ person_ref: ids.parent1, mime_type: 'image/jpeg' });
     });
 
     it('maps spouse creation as one atomic person, membership, partnership, and event bundle', () => {

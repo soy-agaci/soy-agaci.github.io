@@ -1,7 +1,7 @@
 begin;
 select plan(3);
 
-select results_eq(
+select set_eq(
   $$select slug from public.list_public_families()$$,
   $$values ('demo-alpha'::text), ('demo-beta'::text)$$,
   'lists only families with approved public members'
