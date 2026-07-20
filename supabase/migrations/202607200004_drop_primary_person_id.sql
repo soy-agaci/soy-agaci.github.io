@@ -304,6 +304,9 @@ $$;
 grant execute on function public.get_family_graph(uuid[], boolean) to anon, authenticated, service_role;
 
 -- Update import_family_sheet to remove primary_person_id handling
+drop function if exists public.import_family_sheet(text, text, jsonb);
+drop function if exists public.import_family_sheet(jsonb, text, text);
+
 create or replace function public.import_family_sheet(
   p_payload jsonb,
   p_family_slug text,

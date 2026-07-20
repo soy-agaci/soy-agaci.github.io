@@ -187,7 +187,7 @@ function parseArgs(argv: string[]): Record<string, string> {
     return args;
 }
 
-export function importSupabaseUrl(value: string | undefined, allowRemote = process.env.ALLOW_REMOTE_SUPABASE === '1'): string {
+export function importSupabaseUrl(value: string | undefined, allowRemote = false): string {
     if (!value) throw new Error('SUPABASE_URL is required');
     const url = new URL(value);
     if (!allowRemote && !['localhost', '127.0.0.1', '::1'].includes(url.hostname)) {
@@ -221,7 +221,7 @@ async function main(): Promise<void> {
         onWarning: message => warnings.push(message),
     });
     const payload = buildImportPayload(graph, rows.length - 1, warnings, privacy as ImportPrivacy);
-    const client = createClient(importSupabaseUrl(process.env.SUPABASE_URL), serviceKey, {
+    const client = createClient(importSupabaseUrl(process.env.SUPABASE_URL, process.env.ALLOW_REMOTE_SUPABASE === '1'), serviceKey, {
         auth: { persistSession: false, autoRefreshToken: false },
     });
     console.log(JSON.stringify(await importFamily(client, payload, args['family-slug'], args['family-name']), null, 2));

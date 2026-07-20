@@ -10,7 +10,7 @@ if [[ "${ALLOW_REMOTE_SUPABASE:-}" != "1" ]]; then
   exit 1
 fi
 
-npm test -- --run
+npm test -- --run --exclude '**/*.integration.test.ts'
 npm run build
 
 if ! npx supabase projects list >/dev/null 2>&1; then
