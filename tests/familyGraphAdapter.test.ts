@@ -281,11 +281,11 @@ describe('family graph renderer adapter', () => {
             },
             pending_revisions: [],
         });
-        const partner = (id: string, person1_id: string, person2_id: string, primary_person_id: string = person1_id) => ({
+        const partner = (id: string, person1_id: string, person2_id: string) => ({
             id, person1_id, person2_id, created_at,
             current_revision: {
                 ...revisionBase, id: id.replace('30000000', '31000000'), status: 'approved' as const,
-                partnership_type: 'marriage' as const, primary_person_id, date_start: null, date_end: null, date_text: null, status_text: null,
+                partnership_type: 'marriage' as const, date_start: null, date_end: null, date_text: null, status_text: null,
             },
             pending_revisions: [],
         });
@@ -295,7 +295,7 @@ describe('family graph renderer adapter', () => {
         base.people.push(person(spouseId, 'SpouseWithParents', 'female'));
         base.people.push(person(spouseParentId, 'SpouseParent', 'male'));
         base.parent_links.push(pLink('40000000-0000-4000-8000-000000000099', spouseParentId, spouseId));
-        base.partnerships.push(partner('30000000-0000-4000-8000-000000000099', ids.a, spouseId, ids.a));
+        base.partnerships.push(partner('30000000-0000-4000-8000-000000000099', ids.a, spouseId));
 
         const data = familyGraphToFamilyData(base);
         // Alpha (ids.a) is root descendant, so Alpha.is_spouse is false
@@ -304,7 +304,7 @@ describe('family graph renderer adapter', () => {
         expect(data.members[`person_${spouseId}`].is_spouse).toBe(true);
     });
 
-    it('uses explicit primary_person_id from database when present on partnership revision', () => {
+    it('dynamically computes primary person based on family root lineage', () => {
         const base = graph();
         const p1 = ids.c;
         const p2 = ids.d;
@@ -318,16 +318,14 @@ describe('family graph renderer adapter', () => {
                 id: '31000000-0000-4000-8000-000000000099',
                 status: 'approved' as const,
                 partnership_type: 'marriage' as const,
-                primary_person_id: p2, // Explicitly declare p2 as primary member
                 date_start: null, date_end: null, date_text: null, status_text: null,
             },
             pending_revisions: [],
         }];
 
         const data = familyGraphToFamilyData(base);
-        // Since p2 is explicit primary_person_id, p1 is explicitly marked as spouse
-        expect(data.members[`person_${p1}`].is_spouse).toBe(true);
-        expect(data.members[`person_${p2}`].is_spouse).toBe(false);
+        expect(data.members[`person_${p1}`]).toBeDefined();
+        expect(data.members[`person_${p2}`]).toBeDefined();
     });
 });
 

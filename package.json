@@ -18,6 +18,7 @@
     "import:sheet": "tsx tools/import-sheet.ts",
     "import:unify": "tsx tools/import-and-unify.ts",
     "unify:person": "tsx tools/unify-people.ts",
+    "verify:remote": "tsx tools/verify-remote.ts",
     "admin": "tsx tools/admin.ts"
   },
   "repository": {

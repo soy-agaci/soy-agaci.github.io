@@ -191,8 +191,8 @@ export class DagLayout {
             if (is_member(n) && n.added_data.input?.is_spouse) {
                 // Try to find the partner who is NOT a spouse
                 const partners = (this.dag as any).get_partners(n);
-                if (partners) {
-                    return partners.find((p: D3Node) => !p.added_data.input?.is_spouse) || partners[0];
+                if (partners?.length) {
+                    return partners.find((p: D3Node) => !p.added_data.input?.is_spouse) ?? partners[0];
                 }
             }
             return n;

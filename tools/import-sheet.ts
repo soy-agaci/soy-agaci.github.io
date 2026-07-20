@@ -30,7 +30,6 @@ export type ImportPayload = {
         key: string;
         person1_legacy_id: string;
         person2_legacy_id: string;
-        primary_person_legacy_id?: string | null;
         date_start: string | null;
         date_text: string | null;
     }>;
@@ -91,12 +90,10 @@ export function buildImportPayload(
             const marriageTexts = [...new Set(parents.map(id => text(data.members[id]?.marriage)).filter((value): value is string => value !== null))];
             if (marriageTexts.length > 1) warnings.push(`Union ${index + 1} has conflicting partnership dates`);
             const dateText = marriageTexts[0] ?? null;
-            const primaryParentId = parents.find(id => !data.members[id]?.is_spouse) ?? parents[0];
             partnerships.push({
                 key: unionId,
                 person1_legacy_id: parents[0],
                 person2_legacy_id: parents[1],
-                primary_person_legacy_id: primaryParentId,
                 date_start: exactDate(dateText),
                 date_text: dateText,
             });

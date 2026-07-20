@@ -156,16 +156,34 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
     const root = graph.families.find(family => family.root_person_id && visiblePeople.has(family.root_person_id))?.root_person_id
         ?? [...visiblePeople].sort()[0];
 
+    const rootDescendants = new Set<string>();
+    if (root) {
+        const queue = [root];
+        rootDescendants.add(root);
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            for (const [childId, parents] of parentsByChild.entries()) {
+                if (parents.includes(current) && !rootDescendants.has(childId)) {
+                    rootDescendants.add(childId);
+                    queue.push(childId);
+                }
+            }
+        }
+    }
+
     const isSpouseMap = new Set<string>();
     for (const partnership of graph.partnerships) {
         const p1 = partnership.person1_id;
         const p2 = partnership.person2_id;
         if (!visiblePeople.has(p1) || !visiblePeople.has(p2)) continue;
 
-        const current = revision(partnership, proposalId);
-        if (current?.primary_person_id && (current.primary_person_id === p1 || current.primary_person_id === p2)) {
-            const spouseId = current.primary_person_id === p1 ? p2 : p1;
-            isSpouseMap.add(spouseId);
+        const p1IsDescendant = rootDescendants.has(p1);
+        const p2IsDescendant = rootDescendants.has(p2);
+
+        if (p1IsDescendant && !p2IsDescendant) {
+            isSpouseMap.add(p2);
+        } else if (p2IsDescendant && !p1IsDescendant) {
+            isSpouseMap.add(p1);
         }
     }
 
