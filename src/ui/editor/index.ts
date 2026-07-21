@@ -53,6 +53,12 @@ export function closeEditorSidebar() {
     editorInvoker = null;
 }
 
+export function closeEditorSidebarOnMobile() {
+    if (!window.matchMedia?.('(max-width: 760px)').matches) return false;
+    closeEditorSidebar();
+    return true;
+}
+
 const fieldDefinitions: Array<[keyof PersonFields, string, 'text' | 'select']> = [
     ['first_name', 'Ad', 'text'],
     ['last_name', 'Soyad', 'text'],
@@ -244,7 +250,11 @@ function renderPathSearch(tree: Familienbaum, startId: string): void {
         }
     };
     input.onblur = () => setTimeout(() => { dropdown.hidden = true; }, 150);
-    find.onclick = () => { if (selectedId) tree.findPath(startId, selectedId); };
+    find.onclick = () => {
+        if (!selectedId) return;
+        tree.findPath(startId, selectedId);
+        closeEditorSidebarOnMobile();
+    };
     host.append(title, input, dropdown, find);
 }
 
@@ -693,7 +703,7 @@ export function initEditor(tree: Familienbaum, context: EditorContext) {
                     });
                     await context.onSubmitted(result);
                     status.textContent = '';
-                    await flashSubmitted(submit);
+                    if (!closeEditorSidebarOnMobile()) await flashSubmitted(submit);
                 } catch (error) {
                     status.textContent = error instanceof Error ? error.message : 'Gönderilemedi. Bağlantıyı kontrol edip tekrar deneyin.';
                     status.classList.add('error');

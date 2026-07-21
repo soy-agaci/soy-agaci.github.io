@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { closeEditorSidebar, openEditorSidebar } from '../src/ui/editor';
+import { closeEditorSidebar, closeEditorSidebarOnMobile, openEditorSidebar } from '../src/ui/editor';
 
 describe('editor sidebar accessibility', () => {
     beforeEach(() => {
@@ -21,5 +21,22 @@ describe('editor sidebar accessibility', () => {
         expect(sidebar.hasAttribute('inert')).toBe(true);
         expect(sidebar.getAttribute('aria-hidden')).toBe('true');
         expect(document.activeElement).toBe(invoker);
+    });
+
+    it('closes only when the viewport is mobile', () => {
+        const sidebar = document.getElementById('family-sidebar') as HTMLElement;
+        const matchMedia = (matches: boolean) => Object.defineProperty(window, 'matchMedia', {
+            configurable: true,
+            value: () => ({ matches }),
+        });
+
+        openEditorSidebar(sidebar);
+        matchMedia(false);
+        expect(closeEditorSidebarOnMobile()).toBe(false);
+        expect(sidebar.classList.contains('active')).toBe(true);
+
+        matchMedia(true);
+        expect(closeEditorSidebarOnMobile()).toBe(true);
+        expect(sidebar.classList.contains('active')).toBe(false);
     });
 });
