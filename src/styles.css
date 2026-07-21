@@ -253,6 +253,10 @@ body.show-plus .plus-label {
     right: 0;
 }
 
+#family-sidebar > * {
+    flex-shrink: 0;
+}
+
 .sidebar-header {
     padding: 24px;
     background: linear-gradient(135deg, var(--primary-dark), var(--primary));
@@ -609,7 +613,7 @@ select.sidebar-input {
     }
 
     #tree-toolbar .glass-btn {
-        padding: 9px 8px;
+        padding: 12px 8px;
         border-radius: 12px;
     }
 
@@ -619,7 +623,12 @@ select.sidebar-input {
     }
 
     #tree-toolbar .revision-toggle span {
-        padding: 6px 5px;
+        padding: 9px 5px;
+    }
+
+    #global-search-input {
+        padding: 14px 12px;
+        font-size: 1rem;
     }
 
     #family-sidebar {
@@ -630,6 +639,27 @@ select.sidebar-input {
         height: 100dvh;
         border-left: 0;
         border-radius: 0;
+    }
+
+    .sidebar-content {
+        padding: 16px 16px 0;
+        gap: 12px;
+    }
+
+    .sidebar-section {
+        padding: 16px;
+    }
+
+    .sidebar-section + .sidebar-section {
+        margin-top: 0;
+    }
+
+    .sidebar-content > .sidebar-section:last-child {
+        padding-bottom: 8px;
+    }
+
+    .sidebar-path {
+        padding: 12px 16px 16px;
     }
 }
 
@@ -805,6 +835,10 @@ body.is-admin .admin-only { display: inline-flex !important; }
 .editor-status.success {
     color: var(--success);
     font-weight: 700;
+}
+
+.editor-status:empty {
+    display: none;
 }
 
 .new-parent-fields[hidden] {
