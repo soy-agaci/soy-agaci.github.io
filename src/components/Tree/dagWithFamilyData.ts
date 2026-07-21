@@ -96,11 +96,11 @@ export function get_second_names(node: D3Node): string {
 }
 
 export function get_birth_date_of_member(member: Member): string {
-    return getFieldFromMember(member, FIELD_MAPPINGS.birthDate, "?", true);
+    return getFieldFromMember(member, FIELD_MAPPINGS.birthDate, "", true);
 }
 
 export function get_birth_date(node: D3Node): string {
-    if (!node.added_data.input) return "?";
+    if (!node.added_data.input) return "";
     return get_birth_date_of_member(node.added_data.input);
 }
 

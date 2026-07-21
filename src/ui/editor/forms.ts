@@ -334,7 +334,7 @@ export function showMoveChildForm(node: D3Node) {
     potentialParents.forEach(p => {
         const option = document.createElement("option");
         option.value = p.id;
-        option.innerText = `${p.first_name} ${p.last_name || ''} (${p.birth_date || "?"})`;
+        option.innerText = `${p.first_name} ${p.last_name || ''}${p.birth_date ? ` (${p.birth_date})` : ''}`;
         primaryParentSelect.appendChild(option);
     });
 

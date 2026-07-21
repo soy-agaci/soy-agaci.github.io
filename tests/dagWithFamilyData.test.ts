@@ -43,6 +43,7 @@ describe('dagWithFamilyData helpers', () => {
         } as any;
 
         expect(get_birth_date(node)).toBe('1990');
+        expect(get_birth_date({ data: 'unknown', added_data: { input: {} } } as any)).toBe('');
     });
 
     it('preserves layout coordinates and visibility while accepting refreshed member data', () => {
