@@ -612,6 +612,7 @@ async function init() {
     function renderTreeInternal(displayData: FamilyData) {
         // If familienbaum already exists, just update data
         if (familienbaum) {
+            familienbaum.setPaternalAncestorsOnly(familySlugs.length > 1);
             // If we have saved state (from toggle), restore it
             if (savedVisibleNodes && savedVisibleNodes.size > 0) {
                 familienbaum.updateData(displayData, savedVisibleNodes);
@@ -636,7 +637,7 @@ async function init() {
         const svg = d3.select("#tree-svg");
         svg.selectAll("*").remove(); // Clear previous if any (though usually empty on first load)
 
-        familienbaum = new Familienbaum(displayData, svg as any);
+        familienbaum = new Familienbaum(displayData, svg as any, undefined, familySlugs.length > 1);
         setupGlobalSearch(familienbaum); // Initialize search list
 
         const onViewChange = () => {
