@@ -1,4 +1,5 @@
 import { FamilyData, Member } from '../../types/types';
+import type { ViewTransform } from '../../components/Tree/viewport';
 import { normalizeFamilySlugs } from '../data/familyRepository';
 
 // Map between persistent IDs and mem_X IDs
@@ -72,10 +73,16 @@ function decodeNodeId(id: unknown) {
 }
 
 // Encode state to URL-friendly base64 string
-export function encodeState(currentNode: string | null, transform: any, patrilineal: boolean, visibleNodes?: Set<string>): string | null {
+export function encodeState(currentNode: string | null, transform: ViewTransform | null, patrilineal: boolean, visibleNodes?: Set<string>): string | null {
     const state = {
         n: encodeNodeId(currentNode),
-        t: transform ? [Math.round(transform.k * 100) / 100, Math.round(transform.x), Math.round(transform.y)] : null,
+        t: transform ? [
+            Math.round(transform.k * 100) / 100,
+            Math.round(transform.x),
+            Math.round(transform.y),
+            transform.width && Math.round(transform.width),
+            transform.height && Math.round(transform.height),
+        ] : null,
         p: patrilineal ? 1 : 0,
         v: visibleNodes ? Array.from(visibleNodes).map(encodeNodeId).filter(Boolean).join('.') : '',
     };
@@ -112,7 +119,7 @@ export function decodeState(): any {
         // Convert persistent IDs back to mem_X IDs
         const decoded = {
             currentNode: null as string | null,
-            transform: null as { k: number, x: number, y: number } | null,
+            transform: null as ViewTransform | null,
             patrilineal: false,
             visibleNodes: undefined as Set<string> | undefined,
         };
@@ -123,6 +130,13 @@ export function decodeState(): any {
         // Restore transform
         if (Array.isArray(state.t) && state.t.length === 3 && state.t.every((value: unknown) => typeof value === 'number')) {
             decoded.transform = { k: state.t[0], x: state.t[1], y: state.t[2] };
+        } else if (Array.isArray(state.t) && state.t.length === 5 && state.t.slice(0, 3).every((value: unknown) => typeof value === 'number')) {
+            decoded.transform = {
+                k: state.t[0], x: state.t[1], y: state.t[2],
+                ...(typeof state.t[3] === 'number' && typeof state.t[4] === 'number'
+                    ? { width: state.t[3], height: state.t[4] }
+                    : {}),
+            };
         } else if (state.t && typeof state.t.k === 'number' && typeof state.t.x === 'number' && typeof state.t.y === 'number') {
             decoded.transform = state.t;
         }

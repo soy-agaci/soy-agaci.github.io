@@ -108,15 +108,30 @@ run('moderated family creation HTTP roles', () => {
             p_family_slugs: ['root-family'], p_include_pending: false,
         });
         const graph = createdGraph.data as unknown as {
-            families: Array<{ root_person_id: string }>;
+            families: Array<{ root_person_id: string | null; id: string }>;
             people: Array<{ id: string }>;
             memberships: Array<{ person_id: string; current_revision: { status: string } }>;
         };
-        expect(graph.families[0].root_person_id).toBe(sourceRootId);
-        expect(graph.people.filter(person => person.id === sourceRootId)).toHaveLength(1);
-        expect(graph.memberships).toEqual([expect.objectContaining({
-            person_id: sourceRootId, current_revision: expect.objectContaining({ status: 'approved' }),
-        })]);
+        expect(graph.families[0].root_person_id).toBeNull();
+        expect((await anon.rpc('get_family_lineage_members', {
+            p_family_ids: [graph.families[0].id],
+        })).data).toEqual(expect.arrayContaining([
+            { family_id: graph.families[0].id, person_id: sourceRootId },
+            { family_id: graph.families[0].id, person_id: '20000000-0000-0000-0000-000000000005' },
+        ]));
+        expect(graph.people.map(person => person.id).sort()).toEqual([
+            sourceRootId, '20000000-0000-0000-0000-000000000005',
+        ].sort());
+        expect(graph.memberships).toHaveLength(2);
+        expect(graph.memberships).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                person_id: sourceRootId, current_revision: expect.objectContaining({ status: 'approved' }),
+            }),
+            expect.objectContaining({
+                person_id: '20000000-0000-0000-0000-000000000005',
+                current_revision: expect.objectContaining({ status: 'approved' }),
+            }),
+        ]));
 
         const [collisionA, collisionB] = await Promise.all([
             propose(anon, randomUUID(), 'collision-family', sourceFamilyId, sourceRootId, 'Collision A'),

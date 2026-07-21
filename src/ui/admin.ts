@@ -1,5 +1,8 @@
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { getSupabaseClient } from '../services/supabase/client';
+import { store } from '../services/state/store';
+import { localSupabaseUrl } from '../services/supabase/localUrl';
+import { REMOVED_PHOTO_URL } from '../constants/media';
 
 type JsonObject = Record<string, unknown>;
 type RevisionEntry = { base: JsonObject | null; current: JsonObject | null; proposed: JsonObject };
@@ -7,6 +10,11 @@ type AdminProfile = { is_admin: boolean };
 type AdminDetail = {
     submission: JsonObject; family: JsonObject;
     family_creation?: { id: string; slug: string; name: string; source_family: JsonObject; root_person: JsonObject } | null;
+    person_merge?: {
+        id: string; fields: JsonObject; source_fields: JsonObject; target_fields: JsonObject;
+        source_person: { id: string; revision: JsonObject };
+        target_person: { id: string; revision: JsonObject };
+    } | null;
     people: RevisionEntry[]; events: RevisionEntry[]; partnerships: RevisionEntry[];
     parent_links: RevisionEntry[]; memberships: RevisionEntry[]; media: RevisionEntry[];
     sources: RevisionEntry[];
@@ -24,7 +32,8 @@ type AdminInvitation = {
 };
 
 const text = (value: unknown) => value == null || value === '' ? '—'
-    : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    : typeof value === 'boolean' ? value ? 'Evet' : 'Hayır'
+        : typeof value === 'object' ? JSON.stringify(value) : String(value);
 
 function rpcError(prefix: string, error: { message: string } | null) {
     if (!error) return;
@@ -34,6 +43,12 @@ function rpcError(prefix: string, error: { message: string } | null) {
 function finalizedStatus(error: unknown) {
     if (!(error instanceof Error)) return null;
     return error.message.match(/submission is already (approved|rejected|conflict)/i)?.[1].toLowerCase() ?? null;
+}
+
+export function moderationConflictMessage(reason: unknown) {
+    if (reason === 'already_merged') return 'Bu kişiler daha önce birleştirilmiş. İkinci birleştirme isteği artık geçerli değil.';
+    if (reason === 'people_changed') return 'Kişi kayıtları bu istekten sonra değişmiş. Güncel kayıtlarla yeni birleştirme isteği oluşturun.';
+    return 'Gönderim çakışma nedeniyle sonlandırıldı. Güncel ağacı inceleyip yeni bir öneri isteyin.';
 }
 
 export function googleRedirectTo(location: Pick<Location, 'origin' | 'pathname' | 'search'>) {
@@ -128,7 +143,8 @@ function valueCell(value: unknown, available = true, link = false) {
 }
 
 const labels: Record<string, string> = {
-    display_name: 'Ad soyad', given_name: 'Ad', family_name: 'Soyad', gender: 'Cinsiyet',
+    display_name: 'Ad soyad', given_name: 'Ad', middle_names: 'İkinci ad', family_name: 'Soyad',
+    aliases: 'Diğer adlar', gender: 'Cinsiyet', is_living: 'Yaşıyor',
     birth_date: 'Doğum tarihi', birthplace: 'Doğum yeri', death_date: 'Ölüm tarihi', death_place: 'Ölüm yeri',
     occupation: 'Meslek', summary: 'Not', certainty: 'Kesinlik',
     date_text: 'Tarih', place_text: 'Yer', details: 'Açıklama', relationship_type: 'İlişki',
@@ -151,7 +167,7 @@ function row(label: string, base: JsonObject | null, current: JsonObject | null,
     return item;
 }
 
-function renderRevision(group: string, entry: RevisionEntry) {
+function renderRevision(group: string, entry: RevisionEntry): HTMLElement | null {
     const { base, current, proposed } = entry;
     const section = document.createElement('section');
     section.className = 'admin-revision';
@@ -172,13 +188,21 @@ function renderRevision(group: string, entry: RevisionEntry) {
     }
     table.append(columns);
     const keys = new Set([...Object.keys(base ?? {}), ...Object.keys(current ?? {}), ...Object.keys(proposed)]);
+    let rowCount = 0;
     for (const key of keys) {
-        if (['reviewed_at', 'reviewed_by', 'submission_id'].includes(key)) continue;
+        if ([
+            'id', 'status', 'created_at', 'base_revision_id',
+            'reviewed_at', 'reviewed_by', 'submission_id',
+            'person_id', 'partner_id', 'family_id', 'parent_id',
+            'revoked_at', 'revoked_by', 'creator_id'
+        ].includes(key)) continue;
         if (JSON.stringify(base?.[key]) !== JSON.stringify(proposed[key])
             || JSON.stringify(current?.[key]) !== JSON.stringify(proposed[key])) {
             table.append(row(key, base, current, proposed));
+            rowCount++;
         }
     }
+    if (rowCount === 0) return null;
     section.append(heading, table);
     return section;
 }
@@ -190,14 +214,20 @@ function personName(value: JsonObject | null) {
 
 function mediaUrl(value: JsonObject | null) {
     if (!value) return null;
-    return value.url ?? value.legacy_uri ?? value.storage_path;
+    let url = value.url ?? value.legacy_uri ?? value.storage_path;
+    if (typeof url === 'string') {
+        url = localSupabaseUrl(url, 'http:');
+    }
+    return url;
 }
 
 function photo(value: JsonObject | null, old: boolean) {
     const wrap = document.createElement('div');
     wrap.className = `admin-photo ${old ? 'admin-photo-old' : 'admin-photo-new'}`;
     const url = mediaUrl(value);
-    if (typeof url === 'string' && url.startsWith('https://')) {
+    if (!old && url === REMOVED_PHOTO_URL) {
+        wrap.textContent = 'Fotoğraf kaldırılacak';
+    } else if (typeof url === 'string' && url.trim() !== '') {
         const image = document.createElement('img'); image.src = url; image.alt = old ? 'Eski fotoğraf' : 'Yeni fotoğraf'; wrap.append(image);
     } else wrap.textContent = 'Fotoğraf yok';
     if (old && value) { const mark = document.createElement('span'); mark.className = 'admin-photo-delete'; mark.textContent = '×'; mark.setAttribute('aria-label', 'Silinecek'); wrap.append(mark); }
@@ -209,9 +239,19 @@ function renderPerson(entry: RevisionEntry) {
     const old = entry.current ?? entry.base;
     const title = document.createElement('h3'); title.textContent = 'Kişi değişikliği'; section.append(title);
     const names = document.createElement('div'); names.className = 'admin-name-change';
-    const oldName = document.createElement('del'); oldName.textContent = personName(old);
-    const newName = document.createElement('strong'); newName.textContent = personName(entry.proposed);
-    names.append(oldName, newName); section.append(names);
+    const oldNameStr = personName(old);
+    const newNameStr = personName(entry.proposed);
+    if (oldNameStr === newNameStr) {
+        const nameNode = document.createElement('span');
+        nameNode.style.fontWeight = '700';
+        nameNode.textContent = oldNameStr;
+        names.append(nameNode);
+    } else {
+        const oldName = document.createElement('del'); oldName.textContent = oldNameStr;
+        const newName = document.createElement('strong'); newName.textContent = newNameStr;
+        names.append(oldName, newName);
+    }
+    section.append(names);
     const fields = document.createElement('div'); fields.className = 'admin-person-fields';
     for (const key of ['gender', 'birth_date', 'birthplace', 'death_date', 'death_place', 'occupation', 'summary']) {
         if (JSON.stringify(old?.[key]) === JSON.stringify(entry.proposed[key])) continue;
@@ -231,6 +271,27 @@ function renderMedia(entry: RevisionEntry) {
     section.append(comparison); return section;
 }
 
+function renderPersonMerge(merge: NonNullable<AdminDetail['person_merge']>) {
+    const section = document.createElement('section'); section.className = 'admin-revision';
+    const title = document.createElement('h3'); title.textContent = 'Kişi birleştirme';
+    const names = document.createElement('p');
+    names.textContent = `${text(merge.source_person.revision.display_name)} → ${text(merge.target_person.revision.display_name)}`;
+    const table = document.createElement('div'); table.className = 'admin-diff'; table.setAttribute('role', 'table');
+    const headings = document.createElement('div'); headings.className = 'admin-diff-headings'; headings.setAttribute('role', 'row');
+    for (const label of ['Alan', 'Kaynak kayıt', 'Korunacak kayıt', 'Birleşmiş değer']) {
+        const heading = document.createElement('strong'); heading.setAttribute('role', 'columnheader'); heading.textContent = label; headings.append(heading);
+    }
+    table.append(headings);
+    for (const key of Object.keys(merge.fields)) {
+        const item = document.createElement('div'); item.className = 'admin-diff-row'; item.setAttribute('role', 'row');
+        const name = document.createElement('strong'); name.setAttribute('role', 'rowheader'); name.textContent = labels[key] ?? key;
+        item.append(name, valueCell(merge.source_fields[key]), valueCell(merge.target_fields[key]), valueCell(merge.fields[key]));
+        table.append(item);
+    }
+    section.append(title, names, table);
+    return section;
+}
+
 export function renderAdminDetail(container: HTMLElement, detail: AdminDetail) {
     container.replaceChildren();
     const { submission, family } = detail;
@@ -248,16 +309,20 @@ export function renderAdminDetail(container: HTMLElement, detail: AdminDetail) {
             metadata('Önerilen aile', detail.family_creation.name),
             metadata('Kısa ad', detail.family_creation.slug),
             metadata('Kaynak aile', detail.family_creation.source_family.name),
-            metadata('Kök kişi', detail.family_creation.root_person.display_name),
+            metadata('Aileye eklenecek kişi', detail.family_creation.root_person.display_name),
             metadata('Değişiklik', 'Yeni aile ve onaylı kök üyeliği'),
         );
     }
+    if (detail.person_merge) container.append(renderPersonMerge(detail.person_merge));
     for (const entry of detail.people) container.append(renderPerson(entry));
     for (const entry of detail.media) container.append(renderMedia(entry));
     for (const [group, value] of Object.entries(detail)) {
         if (!Array.isArray(value)) continue;
         if (group === 'people' || group === 'media' || group === 'sources') continue;
-        for (const entry of value) container.append(renderRevision(group, entry as RevisionEntry));
+        for (const entry of value) {
+            const section = renderRevision(group, entry as RevisionEntry);
+            if (section) container.append(section);
+        }
     }
 }
 
@@ -275,6 +340,7 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
     let busy = false;
     let acceptanceUserId: string | null = null;
     const setAdminButton = () => {
+        document.body.classList.toggle('is-admin', isAdmin);
         button.textContent = '⚙️';
         button.title = isAdmin ? 'Yönetim' : 'Yönetici girişi';
         button.setAttribute('aria-label', button.title);
@@ -410,18 +476,100 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
         }
         setStatus('Bekleyen gönderimler yükleniyor…');
         const page = await loadReviewQueue(cursor);
+        const detailsMap = new Map<string, AdminDetail>();
+        await Promise.all(page.items.map(async (item) => {
+            try {
+                const detail = await loadReviewDetail(item.id);
+                detailsMap.set(item.id, detail);
+            } catch (error) {
+                console.error(`Failed to load details for submission ${item.id}`, error);
+            }
+        }));
+
         for (const item of page.items) {
+            const detail = detailsMap.get(item.id);
             const entry = document.createElement('button');
             entry.type = 'button';
             entry.className = 'admin-queue-item';
             entry.dataset.submissionId = item.id;
+
+            const textWrap = document.createElement('div');
+            textWrap.className = 'admin-queue-item-text';
+
             const name = document.createElement('strong');
-            name.textContent = item.proposed_family_name
-                ? `${item.proposed_family_name} · ${item.family_name}`
-                : item.family_name;
+            name.className = 'admin-queue-item-title';
+
+            let titleText = '';
+            let subtitleText = '';
+
+            if (item.proposed_family_name) {
+                titleText = `${item.proposed_family_name} · ${item.family_name}`;
+            } else {
+                const primaryPerson = detail?.people?.[0]?.proposed ?? detail?.family_creation?.root_person;
+                if (primaryPerson) {
+                    const pName = personName(primaryPerson);
+                    const birthDate = typeof primaryPerson.birth_date === 'string' ? primaryPerson.birth_date.trim() : '';
+                    const birthSuffix = birthDate ? ` (d. ${birthDate})` : '';
+                    titleText = `${pName}${birthSuffix}`;
+
+                    // Try to find the father's name
+                    const personId = primaryPerson.person_id ?? primaryPerson.id;
+                    const parentIds = new Set<string>();
+
+                    if (detail?.parent_links) {
+                        for (const link of detail.parent_links) {
+                            if (link.proposed.child_id === personId && link.proposed.parent_id) {
+                                parentIds.add(link.proposed.parent_id as string);
+                            }
+                        }
+                    }
+
+                    const fullData = store.getState().fullFamilyData;
+                    if (fullData?.links) {
+                        for (const [source, target] of fullData.links) {
+                            if (target === personId) {
+                                parentIds.add(source);
+                            }
+                        }
+                    }
+
+                    let fatherName = '';
+                    for (const parentId of parentIds) {
+                        const parentInSubmission = detail?.people?.find(p => (p.proposed.person_id ?? p.proposed.id) === parentId);
+                        if (parentInSubmission && parentInSubmission.proposed.gender === 'E') {
+                            fatherName = personName(parentInSubmission.proposed);
+                            break;
+                        }
+                        const parentInStore = fullData?.members[parentId];
+                        if (parentInStore && parentInStore.gender === 'E') {
+                            fatherName = parentInStore.display_name ?? [parentInStore.first_name, parentInStore.last_name].filter(Boolean).join(' ');
+                            break;
+                        }
+                    }
+
+                    if (fatherName) {
+                        subtitleText = `Baba adı: ${fatherName}`;
+                    }
+                } else {
+                    titleText = item.family_name;
+                }
+            }
+
+            name.textContent = titleText;
+            textWrap.append(name);
+
+            if (subtitleText) {
+                const subtitle = document.createElement('span');
+                subtitle.className = 'admin-queue-item-subtitle';
+                subtitle.textContent = subtitleText;
+                textWrap.append(subtitle);
+            }
+
             const meta = document.createElement('span');
+            meta.className = 'admin-queue-item-badge';
             meta.textContent = `${item.entity_count} değişiklik`;
-            entry.append(name, meta);
+
+            entry.append(textWrap, meta);
             entry.onclick = () => void showDetail(item.id);
             content.append(entry);
         }
@@ -454,7 +602,7 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
             const result = await moderateSubmission(selectedId, decision, note);
             await Promise.all([loadQueue(), onPublicRefresh()]);
             if (result.status === 'conflict') {
-                setStatus('Gönderim çakışma nedeniyle sonlandırıldı. Güncel ağacı inceleyip yeni bir öneri isteyin.', true);
+                setStatus(moderationConflictMessage(result.conflict_reason), true);
             }
         } catch (error) {
             const finalized = finalizedStatus(error);
@@ -492,12 +640,11 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
             reasonLabel.htmlFor = 'admin-reject-reason';
             reasonLabel.textContent = 'Red nedeni';
             const reason = document.createElement('textarea');
-            reason.id = 'admin-reject-reason'; reason.className = 'sidebar-input'; reason.placeholder = 'Red nedeni'; reason.required = true; reason.maxLength = 2000;
+            reason.id = 'admin-reject-reason'; reason.className = 'sidebar-input'; reason.placeholder = 'Red nedeni (isteğe bağlı)'; reason.maxLength = 2000;
             const reject = document.createElement('button');
             reject.type = 'button'; reject.className = 'action-btn btn-danger'; reject.textContent = 'Reddet';
             reject.onclick = () => {
                 const note = reason.value.trim();
-                if (!note) { reason.focus(); setStatus('Red nedeni gereklidir.', true); return; }
                 void runAction('reject', note);
             };
             const back = document.createElement('button');
@@ -518,6 +665,7 @@ export function initAdminReview(onPublicRefresh: () => Promise<void>) {
             }
             const profile = await loadAdminProfile();
             isAdmin = profile.is_admin === true;
+            setAdminButton();
             if (!isAdmin) {
                 title.textContent = 'Yetki yok';
                 content.textContent = 'Bu Google hesabı etkin bir yönetici değil.';

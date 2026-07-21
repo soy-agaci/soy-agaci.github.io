@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSupabaseClient } from '../src/services/supabase/client';
 import {
-    googleRedirectTo, initAdminReview, renderAdminDetail, signInWithGoogle,
+    googleRedirectTo, initAdminReview, moderationConflictMessage, renderAdminDetail, signInWithGoogle,
 } from '../src/ui/admin';
+import { REMOVED_PHOTO_URL } from '../src/constants/media';
 
 vi.mock('../src/services/supabase/client', () => ({ getSupabaseClient: vi.fn() }));
 
@@ -42,6 +43,12 @@ const detail = {
 };
 
 describe('Google admin auth and review UI', () => {
+    it('explains a duplicate merge conflict in Turkish', () => {
+        expect(moderationConflictMessage('already_merged')).toBe(
+            'Bu kişiler daha önce birleştirilmiş. İkinci birleştirme isteği artık geçerli değil.',
+        );
+    });
+
     beforeEach(() => {
         shell();
         history.replaceState(null, '', '/');
@@ -51,6 +58,39 @@ describe('Google admin auth and review UI', () => {
         auth.signOut.mockResolvedValue({ error: null });
         auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
         auth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    });
+
+    it('renders a photo-removal proposal without a broken image', () => {
+        const container = document.createElement('div');
+        renderAdminDetail(container, {
+            ...detail,
+            family_creation: null,
+            people: [], sources: [],
+            media: [{
+                base: { legacy_uri: 'https://example.invalid/old.jpg' }, current: null,
+                proposed: { legacy_uri: REMOVED_PHOTO_URL },
+            }],
+        } as any);
+        expect(container.textContent).toContain('Fotoğraf kaldırılacak');
+        expect(container.querySelector('img')?.src).toBe('https://example.invalid/old.jpg');
+    });
+
+    it('renders a pending person merge for approval', () => {
+        const container = document.createElement('div');
+        renderAdminDetail(container, {
+            ...detail, family_creation: null, people: [], sources: [],
+            person_merge: {
+                id: 'merge-1', source_person: { id: 'source', revision: { display_name: 'Source Person' } },
+                target_person: { id: 'target', revision: { display_name: 'Target Person' } },
+                source_fields: { given_name: 'Source', is_living: true },
+                target_fields: { given_name: 'Target', is_living: true },
+                fields: { given_name: 'Target', is_living: true },
+            },
+        } as any);
+        expect(container.textContent).toContain('Source Person → Target Person');
+        expect(container.textContent).toContain('Birleşmiş değer');
+        expect(container.textContent).toContain('Evet');
+        expect(container.textContent).not.toContain('true');
     });
 
     afterEach(() => vi.restoreAllMocks());
@@ -91,6 +131,7 @@ describe('Google admin auth and review UI', () => {
         vi.spyOn(window, 'confirm').mockReturnValue(true);
         initAdminReview(refresh);
         await vi.waitFor(() => expect(document.querySelector('.admin-queue-item')).not.toBeNull());
+        expect(document.body.classList.contains('is-admin')).toBe(true);
         expect(document.querySelector('.admin-queue-item')?.textContent).toContain('<New Family> · Example');
         expect(rpc.mock.calls.slice(0, 2).map(([name]) => name)).toEqual(['accept_admin_invitation', 'get_admin_profile']);
         (document.querySelector('.admin-queue-item') as HTMLButtonElement).click();
@@ -102,8 +143,8 @@ describe('Google admin auth and review UI', () => {
         const reasonLabel = document.querySelector('.admin-reject-label') as HTMLLabelElement;
         expect(reasonLabel.textContent).toBe('Red nedeni');
         expect(reasonLabel.htmlFor).toBe(reason.id);
-        (document.querySelector('.btn-danger') as HTMLButtonElement).click();
-        expect(document.activeElement).toBe(reason);
+        expect(reason.required).toBe(false);
+        expect(reason.placeholder).toContain('isteğe bağlı');
         const approve = document.querySelector('.btn-success') as HTMLButtonElement;
         approve.click(); approve.click();
         await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());

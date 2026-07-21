@@ -1,4 +1,5 @@
 import { FamilyData } from '../../types/types';
+import type { ViewTransform } from '../../components/Tree/viewport';
 
 export interface AppState {
     familyData: FamilyData | null;
@@ -6,7 +7,7 @@ export interface AppState {
     visibleNodes: Set<string>;
     highlightedNodes: Set<string>;
     selectedNodeId: string | null;
-    transform: { k: number; x: number; y: number } | null;
+    transform: ViewTransform | null;
     isPatrilineal: boolean;
     isSidebarOpen: boolean;
     isDarkMode: boolean;
@@ -93,7 +94,7 @@ export class FamilyTreeStore {
         this.notify();
     }
 
-    setTransform(transform: { k: number; x: number; y: number }) {
+    setTransform(transform: ViewTransform | null) {
         this.state.transform = transform;
         // Don't notify for transform to avoid performance issues, or throttle it
     }

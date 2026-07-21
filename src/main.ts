@@ -1,7 +1,7 @@
 import * as d3 from 'd3';
 import './styles.css';
-import { familyGraphToFamilyData, proposalFrame, selectedFamilySlugs } from './services/data/familyGraphAdapter';
-import { uniqueSearchEntries } from './services/data/searchIndex';
+import { familyGraphToFamilyData, selectedFamilySlugs } from './services/data/familyGraphAdapter';
+import { normalizePersonSearch, personSearchEntries, rankPersonSearchEntries } from './services/data/personSearch';
 import {
     getFamilyGraphBySlugs,
     listPublicFamilies,
@@ -22,19 +22,7 @@ import { initAdminReview } from './ui/admin';
 // Initialize Dark Mode
 initDarkMode();
 
-function normalizeString(str: string): string {
-    return str.toLowerCase()
-        .replace(/ğ/g, 'g')
-        .replace(/ü/g, 'u')
-        .replace(/ş/g, 's')
-        .replace(/ı/g, 'i')
-        .replace(/ö/g, 'o')
-        .replace(/ç/g, 'c')
-        .replace(/â/g, 'a')
-        .replace(/î/g, 'i')
-        .replace(/û/g, 'u')
-        .replace(/[^a-z0-9]/g, '');
-}
+const normalizeString = normalizePersonSearch;
 
 function displayFamily(family: PublicFamily): PublicFamily {
     return family.slug === 'selcuk' ? { ...family, name: 'Selçuk' } : family;
@@ -201,25 +189,7 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
     if (!input || !dropdownEl) return;
     const dropdown = dropdownEl as HTMLElement;
 
-    const nodes = familienbaum.dag_all.nodes().filter(n => is_member(n));
-    const searchEntries = uniqueSearchEntries(nodes.map(n => {
-        const name = get_name(n);
-        const bdate = (n.added_data.input as any).birth_date;
-        let extra = "";
-        if (bdate) extra += ` (d. ${bdate})`;
-
-        try {
-            const unions = familienbaum.dag_all.parents(n);
-            if (unions.length > 0) {
-                const parents = familienbaum.dag_all.parents(unions[0]);
-                const father = parents.find(p => (p.added_data.input as any)?.gender === 'E');
-                const parentName = father ? get_name(father) : (parents.length > 0 ? get_name(parents[0]) : "");
-                if (parentName) extra += ` - Baba: ${parentName}`;
-            }
-        } catch(e) {}
-
-        return { display: `${name}${extra}`, id: n.data };
-    }), normalizeString);
+    const searchEntries = personSearchEntries(familienbaum.dag_all);
 
     let selectedIndex = -1;
 
@@ -285,16 +255,7 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
         }
 
         // Filter by normalized partial match
-        const matches = searchEntries.filter(e => e.normalized.includes(normalizedVal));
-        matches.sort((a, b) => {
-            const aName = a.display.split(/ \(|- Baba:/)[0].trim();
-            const bName = b.display.split(/ \(|- Baba:/)[0].trim();
-            const aNameMatches = normalizeString(aName).includes(normalizedVal);
-            const bNameMatches = normalizeString(bName).includes(normalizedVal);
-            if (aNameMatches && !bNameMatches) return -1;
-            if (!aNameMatches && bNameMatches) return 1;
-            return 0;
-        });
+        const matches = rankPersonSearchEntries(searchEntries, val);
         showDropdown(matches);
     };
 
@@ -313,8 +274,7 @@ function setupGlobalSearch(familienbaum: Familienbaum) {
         } else if (e.key === 'Enter') {
             e.preventDefault();
             if (selectedIndex >= 0) {
-                const normalizedVal = normalizeString(input.value.trim());
-                const matches = searchEntries.filter(e => e.normalized.includes(normalizedVal));
+                const matches = rankPersonSearchEntries(searchEntries, input.value);
                 if (matches[selectedIndex]) {
                     selectEntry(matches[selectedIndex]);
                 }
@@ -376,9 +336,9 @@ async function init() {
         const families = selectableFamilies(publicFamilies);
         familySlugs = familySlugs.filter(slug => families.some(family => family.slug === slug));
         if (!familySlugs.length && families.length) familySlugs = [families[0].slug];
-        graph = await getFamilyGraphBySlugs(familySlugs, includePending);
+        graph = await getFamilyGraphBySlugs(familySlugs, includePending, publicFamilies.map(family => family.id));
         if (proposalId && !graph.submissions.some(submission => submission.id === proposalId)) proposalId = undefined;
-        inputData = familyGraphToFamilyData(graph, proposalId);
+        inputData = familyGraphToFamilyData(graph, includePending ? '*' : undefined);
         if (!Object.keys(inputData.members).length) throw new Error('The selected families contain no visible people.');
         updateDataQuery(familySlugs, includePending, proposalId);
     } catch (error) {
@@ -454,91 +414,71 @@ async function init() {
     const globalToggle = document.getElementById('patrilineal-global-toggle');
     treeContainer.replaceChildren();
     const svg = d3.select("#tree-container").append("svg").attr("id", "tree-svg");
+    let familienbaum: Familienbaum;
 
     // Dimensions
     const updateDimensions = () => {
+        const previous = {
+            width: parseFloat(svg.attr("width")),
+            height: parseFloat(svg.attr("height")),
+        };
         const width = window.innerWidth;
         const height = window.innerHeight;
         svg.attr("width", width).attr("height", height);
+        if (familienbaum && Number.isFinite(previous.width) && Number.isFinite(previous.height)) {
+            familienbaum.resizeViewport(previous);
+        }
     };
     window.addEventListener("resize", updateDimensions);
     updateDimensions();
 
-    let familienbaum: Familienbaum;
-
-    const proposalPanel = document.getElementById('proposal-panel')!;
-    const proposalList = document.getElementById('proposal-list')!;
-    const proposalStatus = document.getElementById('proposal-status')!;
+    const toast = document.getElementById('app-toast')!;
     const revisionToggle = document.getElementById('revision-toggle') as HTMLButtonElement;
+    revisionToggle.setAttribute('aria-pressed', String(includePending));
+    let toastTimer: ReturnType<typeof setTimeout>;
 
-    const renderProposalPanel = () => {
-        proposalPanel.hidden = !includePending || graph.submissions.length === 0;
-        proposalList.replaceChildren();
-        for (const submission of graph.submissions) {
-            const familyProposal = graph.family_creation_proposals.find(item => item.submission_id === submission.id);
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'proposal-item';
-            button.setAttribute('aria-pressed', String(submission.id === proposalId));
-            button.textContent = familyProposal
-                ? `${familyProposal.name} (${familyProposal.slug})`
-                : submission.status === 'pending' ? 'Beklemede' : submission.status === 'approved' ? 'Onaylandı' : 'Reddedildi';
-            if (familyProposal) {
-                const context = document.createElement('small');
-                context.textContent = `${familyProposal.source_family_name} · Kök: ${familyProposal.root_display_name}`;
-                button.append(context);
-            }
-            const date = document.createElement('small');
-            date.textContent = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })
-                .format(new Date(submission.created_at));
-            button.append(date);
-            button.onclick = () => {
-                proposalId = submission.id === proposalId ? undefined : submission.id;
-                updateDataQuery(familySlugs, includePending, proposalId, 'push');
-                applyGraph(true);
-            };
-            proposalList.append(button);
-        }
-        proposalStatus.textContent = proposalId ? 'Seçili değişiklik ağa uygulanıyor.' : 'Onaylı ağa uygulanacak bir değişiklik seçin.';
+    const showToast = (message: string, error = false) => {
+        clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.classList.toggle('error', error);
+        toast.hidden = false;
+        toastTimer = setTimeout(() => { toast.hidden = true; }, 1800);
+    };
+
+    const applyGraph = () => {
+        const nextData = familyGraphToFamilyData(graph, includePending ? '*' : undefined);
+        const selectedId = familienbaum?.data.start ?? store.getState().selectedNodeId;
+        if (selectedId && nextData.members[selectedId]) nextData.start = selectedId;
+        store.setData(nextData);
+        buildIdMaps(nextData);
+        renderTree();
         revisionToggle.setAttribute('aria-pressed', String(includePending));
     };
 
-    const applyGraph = (frameProposal = false) => {
-        const nextData = familyGraphToFamilyData(graph, proposalId);
-        const frame = frameProposal && proposalId ? proposalFrame(graph, nextData, proposalId) : undefined;
-        const selectedId = frame?.focusId ?? store.getState().selectedNodeId;
-        if (selectedId && nextData.members[selectedId]) nextData.start = selectedId;
-        if (frame) {
-            savedVisibleNodes = frame.visibleNodes;
-            savedTransform = null;
-        }
-        store.setData(nextData);
-        if (frame) store.setSelectedNode(frame.focusId);
-        buildIdMaps(nextData);
-        renderTree();
-        renderProposalPanel();
-    };
-
-    const reloadData = async (frameProposal = false, normalizeUrl = true) => {
-        proposalStatus.textContent = 'Yükleniyor…';
+    const reloadData = async (normalizeUrl = true) => {
         try {
             await latestLoad.run(
-                () => getFamilyGraphBySlugs(familySlugs, includePending),
+                () => getFamilyGraphBySlugs(familySlugs, includePending, publicFamilies.map(family => family.id)),
                 next => {
                     graph = next;
                     if (proposalId && !graph.submissions.some(submission => submission.id === proposalId)) proposalId = undefined;
                     if (normalizeUrl) updateDataQuery(familySlugs, includePending, proposalId);
-                    applyGraph(frameProposal);
+                    applyGraph();
                 },
             );
         } catch (error) {
-            proposalPanel.hidden = false;
-            proposalStatus.textContent = error instanceof Error ? error.message : 'Aile verisi yüklenemedi.';
+            showToast(error instanceof Error ? error.message : 'Aile verisi yüklenemedi.', true);
         }
     };
 
     const familyOptions = document.getElementById('family-options') as HTMLFieldSetElement;
     const familyPickerLabel = document.getElementById('family-picker-label')!;
+    const preserveCurrentView = () => {
+        if (!familienbaum?.dag_all) return;
+        savedTransform = familienbaum.getTransform();
+        savedVisibleNodes = new Set(familienbaum.dag_all.nodes()
+            .filter(node => node.added_data.is_visible).map(node => node.data));
+    };
     const updateFamilyLabel = () => {
         const selectedNames = selectableFamilies(publicFamilies)
             .filter(family => familySlugs.includes(family.slug))
@@ -560,6 +500,7 @@ async function init() {
             input.value = family.slug;
             input.checked = familySlugs.includes(family.slug);
             input.onchange = () => {
+                preserveCurrentView();
                 const selected = Array.from(familyOptions.querySelectorAll<HTMLInputElement>('input:checked'))
                     .map(item => item.value);
                 if (!selected.length) {
@@ -570,7 +511,7 @@ async function init() {
                 proposalId = undefined;
                 updateFamilyLabel();
                 updateDataQuery(familySlugs, includePending, undefined, 'push');
-                void reloadData(false, false);
+                void reloadData(false);
             };
             label.append(input, document.createTextNode(family.name));
             familyOptions.append(label);
@@ -578,18 +519,18 @@ async function init() {
         updateFamilyLabel();
     };
     renderFamilyOptions();
-    initAdminReview(async () => {
-        publicFamilies = await listPublicFamilies();
-        renderFamilyOptions();
-        await reloadData(false, false);
-    });
-
     revisionToggle.onclick = () => {
+        preserveCurrentView();
         includePending = !includePending;
         proposalId = undefined;
         updateDataQuery(familySlugs, includePending, undefined, 'push');
-        void reloadData(false, false);
+        void reloadData(false);
     };
+    initAdminReview(async () => {
+        publicFamilies = await listPublicFamilies();
+        renderFamilyOptions();
+        await reloadData(false);
+    });
 
     // State for preserving Full Tree visibility
     let fullTreeVisibleNodes: Set<string> | null = null;
@@ -599,24 +540,23 @@ async function init() {
 
 
         const currentFullData = store.getState().fullFamilyData!;
-        let displayData = currentFullData;
-
-        if (store.getState().isPatrilineal) {
-            displayData = filterPatrilineal(currentFullData);
-        }
+        const patrilinealData = filterPatrilineal(currentFullData);
+        const displayData = store.getState().isPatrilineal ? patrilinealData : currentFullData;
         globalToggle?.setAttribute('aria-pressed', String(store.getState().isPatrilineal));
-
         renderTreeInternal(displayData);
     }
 
     function renderTreeInternal(displayData: FamilyData) {
         // If familienbaum already exists, just update data
         if (familienbaum) {
-            familienbaum.setPaternalAncestorsOnly(familySlugs.length > 1);
             // If we have saved state (from toggle), restore it
             if (savedVisibleNodes && savedVisibleNodes.size > 0) {
+                const shouldFit = !savedTransform;
                 familienbaum.updateData(displayData, savedVisibleNodes);
                 savedVisibleNodes = null; // Clear
+                if (shouldFit) {
+                    familienbaum.fitVisibleNodes();
+                }
             } else {
                 familienbaum.updateData(displayData);
             }
@@ -625,8 +565,7 @@ async function init() {
 
             if (savedTransform) {
                 try {
-                    const transform = d3.zoomIdentity.translate(savedTransform.x, savedTransform.y).scale(savedTransform.k);
-                    familienbaum.svg.call(familienbaum.zoom.transform, transform);
+                    familienbaum.restoreTransform(savedTransform);
                 } catch (e) { console.warn("Failed to restore transform", e); }
                 savedTransform = null;
             }
@@ -637,7 +576,7 @@ async function init() {
         const svg = d3.select("#tree-svg");
         svg.selectAll("*").remove(); // Clear previous if any (though usually empty on first load)
 
-        familienbaum = new Familienbaum(displayData, svg as any, undefined, familySlugs.length > 1);
+        familienbaum = new Familienbaum(displayData, svg as any);
         setupGlobalSearch(familienbaum); // Initialize search list
 
         const onViewChange = () => {
@@ -653,8 +592,7 @@ async function init() {
             }
 
             if (familienbaum && familienbaum.g) {
-                const t = d3.zoomTransform(familienbaum.g.node()!);
-                store.setTransform({ k: t.k, x: t.x, y: t.y });
+                store.setTransform(familienbaum.getTransform());
             }
 
             // 2. Update URL state using the updated store
@@ -665,12 +603,13 @@ async function init() {
         // Initialize Editor (Sidebar, etc.)
         initEditor(familienbaum, {
             getGraph: () => graph,
-            getFamilies: () => selectableFamilies(publicFamilies).filter(family => familySlugs.includes(family.slug)),
-            onSubmitted: async result => {
+            getFamilies: () => selectableFamilies(publicFamilies),
+            onSubmitted: async () => {
+                preserveCurrentView();
                 includePending = true;
-                proposalId = result.submission_id;
-                updateDataQuery(familySlugs, true, proposalId, 'push');
-                await reloadData(true, false);
+                proposalId = undefined;
+                updateDataQuery(familySlugs, true, undefined, 'push');
+                await reloadData(false);
             },
         });
 
@@ -699,48 +638,7 @@ async function init() {
             // (where many nodes are filtered out). Now we accept any match > 0.
             if (validNodeCount > 0) {
                 console.log(`Restoring visibility: ${validNodeCount}/${savedVisibleNodes!.size} nodes exist in current DAG`);
-
-                // Restore visibility from explicit state
-                for (let node of familienbaum.dag_all.nodes()) {
-                    if (savedVisibleNodes!.has(node.data)) {
-                        node.added_data.is_visible = true;
-                    } else {
-                        node.added_data.is_visible = false;
-                    }
-                }
-
-                // Ensure root is always visible
-                const root = familienbaum.dag_all.find_node(displayData.start);
-                if (root) {
-                    root.added_data.is_visible = true;
-                }
-
-                // CRITICAL FIX: Ensure connectivity after restoring visibility
-                // Problem: Saved state may have member nodes but not the union nodes connecting them
-                // Solution: For each visible node, ensure its unions are visible if they lead to other visible nodes
-                for (let node of familienbaum.dag_all.nodes()) {
-                    if (!node.added_data.is_visible) continue;
-
-                    // Make child unions visible if they have visible children
-                    const children = node.children ? node.children() : [];
-                    for (let union of children) {
-                        const unionChildren = union.children ? union.children() : [];
-                        const hasVisibleChild = unionChildren.some((c: any) => c.added_data.is_visible);
-                        if (hasVisibleChild) {
-                            union.added_data.is_visible = true;
-                        }
-                    }
-
-                    // Make parent unions visible if they have visible parents
-                    const parents = (familienbaum.dag_all as any).parents ? (familienbaum.dag_all as any).parents(node) : [];
-                    for (let union of parents) {
-                        const unionParents = (familienbaum.dag_all as any).parents ? (familienbaum.dag_all as any).parents(union) : [];
-                        const hasVisibleParent = unionParents.some((p: any) => p.added_data.is_visible);
-                        if (hasVisibleParent) {
-                            union.added_data.is_visible = true;
-                        }
-                    }
-                }
+                familienbaum.restoreVisibility(savedVisibleNodes!, displayData.start);
             } else {
                 console.warn(`Skipping visibility restoration: only ${validNodeCount}/${savedVisibleNodes!.size} nodes exist. Using default view.`);
                 // Don't restore - trust default from reset_dags()
@@ -805,13 +703,14 @@ async function init() {
             }
         }
 
-        familienbaum.draw(shouldRecenter, displayData.start, false);
+        // Layout coordinates must stay deterministic; the saved camera is applied afterwards.
+        familienbaum.draw(true, displayData.start, false);
 
         // Restore transform if available and valid
-        if (state.transform && !shouldRecenter) {
-            const t = state.transform;
-            const transform = d3.zoomIdentity.translate(t.x, t.y).scale(t.k);
-            familienbaum.svg.call(familienbaum.zoom.transform, transform);
+        if (isReset) {
+            familienbaum.fitVisibleNodes();
+        } else if (state.transform && !shouldRecenter) {
+            familienbaum.restoreTransform(state.transform);
         }
 
         // Attach callback AFTER initial draw to avoid overwriting URL with partial state during init
@@ -821,7 +720,6 @@ async function init() {
     // Initial Render with slight delay to ensure DOM is ready
     setTimeout(() => {
         renderTree();
-        renderProposalPanel();
     }, 50);
 
     // Event Listeners
@@ -869,11 +767,24 @@ async function init() {
     const resetViewBtn = document.getElementById('reset-view-btn');
     if (resetViewBtn) {
         resetViewBtn.addEventListener('click', () => {
-            const url = new URL(window.location.href);
-            url.searchParams.delete('reset');
-            url.hash = '';
-            sessionStorage.setItem('soyagaci_reset_requested', '1');
-            window.location.href = url.pathname + url.search;
+            urlState = null;
+            lastNodeId = null;
+            savedVisibleNodes = null;
+            savedTransform = null;
+            fullTreeVisibleNodes = null;
+            store.getState().isPatrilineal = false;
+            store.getState().selectedNodeId = null;
+            store.getState().visibleNodes = new Set();
+            store.getState().transform = null;
+            const resetData = familyGraphToFamilyData(graph, includePending ? '*' : undefined);
+            store.setData(resetData);
+            buildIdMaps(resetData);
+            globalToggle?.setAttribute('aria-pressed', 'false');
+            familienbaum?.resetView(resetData);
+            for (const key of ['soyagaci_last_node', 'soyagaci_visible_nodes', 'soyagaci_view_transform', 'soyagaci_patrilineal_mode']) {
+                localStorage.removeItem(key);
+            }
+            history.replaceState(null, '', window.location.pathname + window.location.search);
         });
     }
 
@@ -899,7 +810,7 @@ async function init() {
             includePending = nextPending;
             proposalId = nextProposal;
             renderFamilyOptions();
-            await reloadData(Boolean(proposalId), false);
+            await reloadData(false);
         }
         const urlState = decodeState();
         if (urlState) {
@@ -918,27 +829,12 @@ async function init() {
                 if (urlState.visibleNodes) {
                     const visibleSet = urlState.visibleNodes;
                     store.setVisibleNodes(visibleSet);
-
-                    // Apply to dag_all
-                    for (let node of familienbaum.dag_all.nodes()) {
-                        node.added_data.is_visible = visibleSet.has(node.data);
-                    }
-
-                    // Ensure currentNode is visible
-                    if (urlState.currentNode) {
-                        const node = familienbaum.dag_all.find_node(urlState.currentNode);
-                        if (node) node.added_data.is_visible = true;
-                    }
+                    familienbaum.restoreVisibility(visibleSet, urlState.currentNode ?? familienbaum.data.start);
                 }
 
                 // 3. Restore Transform
                 if (urlState.transform) {
                     store.setTransform(urlState.transform);
-                    if (familienbaum.svg && familienbaum.zoom) {
-                        const t = urlState.transform;
-                        const transform = d3.zoomIdentity.translate(t.x, t.y).scale(t.k);
-                        familienbaum.svg.call(familienbaum.zoom.transform, transform);
-                    }
                 }
 
                 // 4. Draw and Focus
@@ -950,6 +846,7 @@ async function init() {
                 } else {
                     familienbaum.draw(false);
                 }
+                if (urlState.transform) familienbaum.restoreTransform(urlState.transform);
             }
         }
     });
@@ -957,8 +854,7 @@ async function init() {
     // Save state on unload
     window.addEventListener("beforeunload", () => {
         if (familienbaum && familienbaum.g) {
-            const transform = d3.zoomTransform(familienbaum.g.node()!);
-            localStorage.setItem('soyagaci_view_transform', JSON.stringify({ k: transform.k, x: transform.x, y: transform.y }));
+            localStorage.setItem('soyagaci_view_transform', JSON.stringify(familienbaum.getTransform()));
 
             if (familienbaum.dag_all) {
                 const visibleNodes: string[] = [];

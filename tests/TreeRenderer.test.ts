@@ -150,6 +150,21 @@ describe('TreeRenderer', () => {
             expect(g.selectAll('g.node').size()).toBe(1);
         });
 
+        it('uses computed coordinates when a new focus node has no previous position', () => {
+            renderer.transition_milliseconds = 0;
+            const node = createMockNode('mem_new');
+            node.x = 120;
+            node.y = 240;
+            delete node.added_data.x0;
+            delete node.added_data.y0;
+
+            renderer.draw_nodes([node], node);
+            renderer.draw_links([{ source: node, target: node }], node);
+
+            expect(g.select('g.node').attr('transform')).toBe('translate(240,120)');
+            expect(g.select('path.link').attr('d')).not.toContain('undefined');
+        });
+
         it('refreshes a pending profile name and media on an existing node', () => {
             renderer.transition_milliseconds = 0;
             const currentNode = createMockNode('mem_0');

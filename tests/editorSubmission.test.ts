@@ -6,11 +6,13 @@ import {
     FamilyCreationSubmitter,
     getAnonymousActorSecret,
     mapChildEdit,
+    mapFamilyJoin,
     mapProfileEdit,
     mapSpouseEdit,
     type PersonFields,
 } from '../src/ui/editor/submission';
-import { suggestFamilySlug } from '../src/ui/editor';
+import { editableFamilies, resolvedMergeFields, suggestFamilySlug } from '../src/ui/editor';
+import { uuid } from '../src/utils/uuid';
 
 const ids = {
     family1: '10000000-0000-4000-8000-000000000001',
@@ -89,9 +91,45 @@ class MemoryStorage implements Storage {
 }
 
 describe('editor bundle mapping', () => {
+    it('edits through a displayed family even when lineage belongs elsewhere', () => {
+        const value = graph();
+        value.all_lineage_memberships = [{ family_id: ids.family1, person_id: ids.parent1 }];
+        value.memberships.push({
+            id: '60000000-0000-4000-8000-000000000003', family_id: ids.family2,
+            person_id: ids.parent1, created_at,
+            current_revision: { ...revisionBase, id: '61000000-0000-4000-8000-000000000003', status: 'approved' },
+            pending_revisions: [],
+        });
+        expect(editableFamilies(value, ids.parent1, value.families)).toEqual(value.families);
+    });
+
+    it('auto-fills compatible merge fields and leaves only real conflicts', () => {
+        const value = graph();
+        value.people[1].current_revision!.summary = 'Source note';
+        const unresolved = resolvedMergeFields(value, ids.parent1, ids.parent2);
+        expect(unresolved.conflicts.map(conflict => conflict.key)).toEqual(['family_name']);
+        const resolved = resolvedMergeFields(value, ids.parent1, ids.parent2, { family_name: 'source' });
+        expect(resolved.conflicts).toEqual([]);
+        expect(resolved.fields).toMatchObject({
+            given_name: 'Parent', family_name: 'Two', summary: 'Source note', birth_date: '1980-01-01',
+        });
+    });
+
     it('suggests an editable ASCII family slug without rendering input as markup', () => {
         expect(suggestFamilySlug('  Şelçuk Öztürk Ailesi  ')).toBe('selcuk-ozturk-ailesi');
         expect(suggestFamilySlug('<img src=x onerror=alert(1)>')).toBe('img-src-x-onerror-alert-1');
+    });
+
+    it('maps joining an existing family as a membership-only edit', () => {
+        expect(mapFamilyJoin(graph(), ids.parent1, ids.family1)).toEqual({ memberships: [{
+            ref: '60000000-0000-4000-8000-000000000001',
+            membership_id: '60000000-0000-4000-8000-000000000001',
+            base_revision_id: '61000000-0000-4000-8000-000000000001',
+            person_ref: ids.parent1,
+        }] });
+        expect(mapFamilyJoin(graph(), ids.parent1, ids.family2, idsFrom())).toEqual({
+            memberships: [{ ref: '90000000-0000-4000-8000-000000000001', person_ref: ids.parent1 }],
+        });
     });
     it('maps a full profile update using date_text without inventing exact precision', () => {
         const bundle = mapProfileEdit(graph(), ids.parent1, fields({
@@ -114,6 +152,24 @@ describe('editor bundle mapping', () => {
         expect(bundle.events?.[0]).not.toHaveProperty('date_start');
         expect(bundle.sources).toBeUndefined();
         expect(bundle.media?.[0]).toMatchObject({ person_ref: ids.parent1, mime_type: 'image/jpeg' });
+    });
+
+    it('stores local LAN Supabase media as HTTPS for submission validation', () => {
+        const bundle = mapProfileEdit(graph(), ids.parent1, fields({
+            media_url: 'http://192.168.1.12:54321/storage/v1/object/public/media/photo.webp',
+        }), undefined, idsFrom());
+        expect(bundle.media?.[0].url).toBe('https://192.168.1.12:54321/storage/v1/object/public/media/photo.webp');
+    });
+
+    it('does not count an unchanged person alongside a photo-only change', () => {
+        const bundle = mapProfileEdit(graph(), ids.parent1, fields({
+            first_name: 'Parent', last_name: 'One', gender: '', note: '',
+            birth_date: '1980-01-01', birthplace: 'Old Town', occupation: '',
+            media_url: 'https://example.test/photo.webp',
+        }), undefined, idsFrom());
+        expect(bundle.people).toBeUndefined();
+        expect(bundle.events).toBeUndefined();
+        expect(bundle.media).toHaveLength(1);
     });
 
     it('maps spouse creation as one atomic person, membership, partnership, and event bundle', () => {
@@ -164,18 +220,19 @@ describe('editor bundle mapping', () => {
 
     it('preserves unchanged exact dates and maps canonical or imprecise edits consistently', () => {
         const unchanged = mapProfileEdit(graph(), ids.parent1, fields({
-            first_name: 'Parent', last_name: 'One', birth_date: '1980-01-01', birthplace: 'Old Town',
+            first_name: 'Parent', last_name: 'One', birth_date: '1980-01-01', birthplace: 'New Town',
             occupation: '', note: '',
         }), ids.family1, idsFrom());
         expect(unchanged.events?.[0]).toMatchObject({
             date_start: '1980-01-01', date_end: '1980-01-01', date_text: '1980-01-01',
+            place_text: 'New Town',
         });
 
-        const range = mapProfileEdit(graph(), ids.parent1, fields({ birth_date: '1980-01-01/1980-01-31' }), ids.family1, idsFrom());
+        const range = mapProfileEdit(graph(), ids.parent1, fields({ birth_date: '1980-01-01/1980-01-31', birthplace: 'Old Town' }), ids.family1, idsFrom());
         expect(range.events?.[0]).toMatchObject({
             date_start: '1980-01-01', date_end: '1980-01-31', date_text: '1980-01-01/1980-01-31',
         });
-        const imprecise = mapProfileEdit(graph(), ids.parent1, fields({ birth_date: 'circa 1980' }), ids.family1, idsFrom());
+        const imprecise = mapProfileEdit(graph(), ids.parent1, fields({ birth_date: 'circa 1980', birthplace: 'Old Town' }), ids.family1, idsFrom());
         expect(imprecise.events?.[0]).toMatchObject({ date_text: 'circa 1980' });
         expect(imprecise.events?.[0]).not.toHaveProperty('date_start');
     });
@@ -194,6 +251,16 @@ describe('anonymous submission identity', () => {
         expect(first.length).toBeGreaterThanOrEqual(43);
         expect(getAnonymousActorSecret(storage)).toBe(first);
         expect(storage.length).toBe(1);
+    });
+
+    it('creates a UUID when randomUUID is unavailable on an HTTP origin', () => {
+        const originalCrypto = globalThis.crypto;
+        vi.stubGlobal('crypto', { getRandomValues: (bytes: Uint8Array) => bytes.fill(0) });
+        try {
+            expect(uuid()).toBe('00000000-0000-4000-8000-000000000000');
+        } finally {
+            vi.stubGlobal('crypto', originalCrypto);
+        }
     });
 
     it('retries a failed payload with the same request ID and uses a new ID after success', async () => {
@@ -247,7 +314,7 @@ describe('anonymous submission identity', () => {
             .mockImplementationOnce(() => new Promise<SubmissionResult>(done => { resolve = done; }));
         const coordinator = new FamilyCreationSubmitter(submit);
         const input = {
-            sourceFamilyId: ids.family1, rootPersonId: ids.parent1,
+            sourceFamilyId: ids.family1, personId: ids.parent1,
             name: 'New Family', slug: 'new-family',
         };
         await expect(coordinator.send(input)).rejects.toThrow('offline');

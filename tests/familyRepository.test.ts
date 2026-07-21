@@ -7,6 +7,8 @@ import {
     rejectFamilySubmission,
     submitFamilyCreation,
     submitFamilyEdit,
+    submitPersonMerge,
+    unifyPeople,
 } from '../src/services/data/familyRepository';
 import { getSupabaseClient } from '../src/services/supabase/client';
 
@@ -27,6 +29,8 @@ const graph = {
     partnerships: [],
     parent_links: [],
     memberships: [],
+    lineage_memberships: [],
+    all_lineage_memberships: [],
     media: [],
     sources: [],
     submissions: [],
@@ -43,7 +47,7 @@ describe('familyRepository', () => {
     });
 
     it('returns a valid graph from the RPC', async () => {
-        rpc.mockResolvedValue({ data: graph, error: null });
+        rpc.mockResolvedValueOnce({ data: graph, error: null }).mockResolvedValueOnce({ data: [], error: null });
 
         await expect(getFamilyGraph([graph.families[0].id], true)).resolves.toEqual(graph);
         expect(rpc).toHaveBeenCalledWith('get_family_graph', {
@@ -68,7 +72,8 @@ describe('familyRepository', () => {
             citation: null,
             created_at: '2026-01-01T00:00:00Z',
         };
-        rpc.mockResolvedValue({ data: { ...graph, sources: [source] }, error: null });
+        rpc.mockResolvedValueOnce({ data: { ...graph, sources: [source] }, error: null })
+            .mockResolvedValueOnce({ data: [], error: null });
         await expect(getFamilyGraph([graph.families[0].id], true)).resolves.toMatchObject({ sources: [source] });
 
         rpc.mockResolvedValue({ data: { ...graph, sources: [{ ...source, submission_status: 'rejected' }] }, error: null });
@@ -87,6 +92,7 @@ describe('familyRepository', () => {
         const second = { ...graph.families[0], id: '10000000-0000-4000-8000-000000000002', slug: 'second' };
         rpc
             .mockResolvedValueOnce({ data: { ...graph, families: [second, graph.families[0]] }, error: null })
+            .mockResolvedValueOnce({ data: [], error: null })
             .mockResolvedValueOnce({ data: [], error: null });
 
         const result = await getFamilyGraphBySlugs(['example', 'second'], true);
@@ -97,8 +103,28 @@ describe('familyRepository', () => {
             p_include_pending: true,
         });
         expect(rpc).toHaveBeenCalledWith('list_family_creation_proposals', {
-            p_source_family_ids: [second.id, graph.families[0].id],
+            p_source_family_ids: [graph.families[0].id, second.id],
         });
+    });
+
+    it('loads global assignments while keeping selected lineage separate', async () => {
+        const secondId = '10000000-0000-4000-8000-000000000002';
+        const selectedPerson = '20000000-0000-4000-8000-000000000001';
+        const otherPerson = '20000000-0000-4000-8000-000000000002';
+        const assignments = [
+            { family_id: graph.families[0].id, person_id: selectedPerson },
+            { family_id: secondId, person_id: otherPerson },
+        ];
+        rpc.mockResolvedValueOnce({ data: graph, error: null })
+            .mockResolvedValueOnce({ data: assignments, error: null });
+
+        const result = await getFamilyGraphBySlugs(['example'], false, [graph.families[0].id, secondId]);
+
+        expect(rpc).toHaveBeenLastCalledWith('get_family_lineage_members', {
+            p_family_ids: [graph.families[0].id, secondId],
+        });
+        expect(result.all_lineage_memberships).toEqual(assignments);
+        expect(result.lineage_memberships).toEqual([assignments[0]]);
     });
 
     it('maps safe pending family proposals into the existing submission selector', async () => {
@@ -110,7 +136,9 @@ describe('familyRepository', () => {
             source_family_id: graph.families[0].id, source_family_slug: 'example', source_family_name: 'Example',
             created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', reviewed_at: null,
         } as const;
-        rpc.mockResolvedValueOnce({ data: graph, error: null }).mockResolvedValueOnce({ data: [proposal], error: null });
+        rpc.mockResolvedValueOnce({ data: graph, error: null })
+            .mockResolvedValueOnce({ data: [proposal], error: null })
+            .mockResolvedValueOnce({ data: [], error: null });
         const result = await getFamilyGraphBySlugs(['example'], true);
         expect(result.family_creation_proposals).toEqual([proposal]);
         expect(result.submissions).toEqual([expect.objectContaining({ id: proposal.submission_id, status: 'pending' })]);
@@ -142,7 +170,7 @@ describe('familyRepository', () => {
 
         expect(second).toEqual({
             families: [], people: [], life_events: [], partnerships: [],
-            parent_links: [], memberships: [], media: [], sources: [], submissions: [], family_creation_proposals: [],
+            parent_links: [], memberships: [], lineage_memberships: [], all_lineage_memberships: [], media: [], sources: [], submissions: [], family_creation_proposals: [],
         });
         for (const key of Object.keys(second) as Array<keyof typeof second>) {
             expect(second[key]).not.toBe(first[key]);
@@ -180,7 +208,7 @@ describe('familyRepository', () => {
         rpc.mockResolvedValue({ data: result, error: null });
         await expect(submitFamilyCreation({
             sourceFamilyId: graph.families[0].id,
-            rootPersonId: '30000000-0000-4000-8000-000000000001',
+            personId: '30000000-0000-4000-8000-000000000001',
             name: 'New Family', slug: 'new-family',
         }, '20000000-0000-4000-8000-000000000001', 'synthetic-actor-secret-000000000000000001')).resolves.toEqual(result);
         expect(rpc).toHaveBeenCalledWith('submit_family_creation', {
@@ -192,9 +220,46 @@ describe('familyRepository', () => {
         });
         await expect(submitFamilyCreation({
             sourceFamilyId: graph.families[0].id,
-            rootPersonId: '30000000-0000-4000-8000-000000000001',
+            personId: '30000000-0000-4000-8000-000000000001',
             name: '<script>', slug: 'Not Valid',
         }, '20000000-0000-4000-8000-000000000001')).rejects.toThrow();
+    });
+
+    it('uses the admin-only RPC to merge people', async () => {
+        rpc.mockResolvedValue({ data: { success: true }, error: null });
+        await expect(unifyPeople(
+            '30000000-0000-4000-8000-000000000001',
+            '30000000-0000-4000-8000-000000000002',
+            {
+                given_name: 'Merged', middle_names: null, family_name: 'Person', gender: null,
+                is_living: true, summary: null, aliases: [], birth_date: null, birthplace: null,
+                death_date: null, death_place: null, occupation: null,
+            },
+        )).resolves.toBeUndefined();
+        expect(rpc).toHaveBeenCalledWith('admin_unify_person_resolved', {
+            p_source_person_id: '30000000-0000-4000-8000-000000000001',
+            p_target_person_id: '30000000-0000-4000-8000-000000000002',
+            p_fields: {
+                given_name: 'Merged', middle_names: null, family_name: 'Person', gender: null,
+                is_living: true, summary: null, aliases: [], birth_date: null, birthplace: null,
+                death_date: null, death_place: null, occupation: null,
+            },
+        });
+    });
+
+    it('submits a resolved merge for moderation', async () => {
+        rpc.mockResolvedValue({ data: { submission_id: '40000000-0000-4000-8000-000000000001', status: 'pending' }, error: null });
+        const fields = {
+            given_name: 'Merged', middle_names: null, family_name: 'Person', gender: null,
+            is_living: true, summary: null, aliases: [], birth_date: null, birthplace: null,
+            death_date: null, death_place: null, occupation: null,
+        };
+        await expect(submitPersonMerge(
+            graph.families[0].id, '20000000-0000-4000-8000-000000000001',
+            '30000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000002', fields,
+            'synthetic-actor-secret-000000000000000001',
+        )).resolves.toMatchObject({ status: 'pending' });
+        expect(rpc).toHaveBeenCalledWith('submit_person_merge', expect.objectContaining({ p_fields: fields }));
     });
 
     it('forwards a validated anonymous actor secret without putting it in the bundle', async () => {

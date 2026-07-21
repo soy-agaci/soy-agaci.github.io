@@ -292,19 +292,19 @@ ALLOW_REMOTE_SUPABASE=1 SUPABASE_URL=<hosted-api-url> SUPABASE_SERVICE_ROLE_KEY=
 
 Import another family or another family with its own slug and source. Equal legacy IDs in separate imports remain family-scoped and distinct. A person appears in multiple families only when the same canonical person is deliberately given approved memberships in each family; the local demo seed tests that explicit overlap behavior.
 
-## Moderated family creation
+## Moderated family assignment and creation
 
-Any public visitor can open an approved public person and submit **Aile başlat** from a
-visible source family. The request stores only a pending creation proposal tied to the normal
-submission audit record. It does not allocate a family, membership, person, reviewer, or
-status supplied by the browser.
+Any public visitor can use **Aile adı ekle** for an approved public person without an existing
+family assignment. They can choose an existing family or propose a new name and slug. New
+family requests remain pending in the normal submission audit record and do not create a
+family before approval.
 
-An active Google admin reviews the proposed family name/slug, source family, and root person
-in the existing submission queue. Approval rechecks root visibility and slug availability,
-then atomically creates the family and one approved root membership using the existing person
-ID. Rejection or conflict creates neither row, and the slug remains available for a later
-proposal. After approval, confirm the family appears in **Aileler** and that its root appears
-once. Pending proposals are visible only in **Bekleyen** mode for their visible source family.
+Approval rechecks visibility and slug availability, then assigns the person's paternal
+cluster: paternal ancestors, every child of those family-line men, and descendants through
+sons. Technical memberships may additionally include partners needed to draw the tree, but
+those partners are not thereby assigned that family name. Families have no persisted root
+person. Rejection or conflict creates no approved assignment; pending changes are visible
+through the approved/pending emoji toggle.
 
 ## Frontend hosting
 
@@ -352,7 +352,7 @@ Do not deploy `.env`, `.local/`, source CSVs, browser storage, test screenshots,
 4. From a selected public person, submit a new-family proposal with one failed-request retry. Confirm it appears in pending mode but not approved family controls.
 5. Confirm no Google request occurs before clicking sign-in. Click sign-in and complete Google OAuth on the canonical redirect.
 6. As a non-invited Google user, confirm moderation is denied and logout remains available. As an active admin, create and revoke an invitation. Sign in as the invited Google user and confirm automatic activation, then inspect base/current/proposed, approve and reject family proposals, verify same-slug approval conflict, and verify stale edit approval becomes conflict.
-7. Confirm the approved family is discoverable/selectable, its root is the same person exactly once, rejected/private data stays absent, and browser console, page errors, failed requests, and unexpected production Google requests are clean.
+7. Confirm the approved family is discoverable/selectable, the assigned person's paternal cluster appears exactly once, rejected/private data stays absent, and browser console, page errors, failed requests, and unexpected production Google requests are clean.
 8. Revoke pending smoke invitations and delete or reject all synthetic submissions. Verify no synthetic users, invitations, families, pending submissions, screenshots, CSVs, or tokens remain.
 
 ## Known limitations

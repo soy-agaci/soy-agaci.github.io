@@ -416,5 +416,41 @@ describe('DagLayout', () => {
                 expect(isFinite(node.y)).toBe(true);
             }
         });
+
+        it('orders a lineage member before a spouse even when the stored pair is reversed', () => {
+            const links: Array<[string, string]> = [
+                ['spouse', 'union'], ['primary', 'union'], ['union', 'child'],
+            ];
+            const members = {
+                primary: { id: 'primary', name: 'Primary', birth_date: '1950', is_spouse: false },
+                spouse: { id: 'spouse', name: 'Spouse', birth_date: '1952', is_spouse: true },
+                child: { id: 'child', name: 'Child', birth_date: '1980', is_spouse: false },
+            };
+            const dag = new DagWithFamilyData(links, members, { union: ['spouse', 'primary'] });
+
+            new DagLayout(dag, [100, 100]).run();
+
+            expect(dag.find_node('primary').x).toBeLessThan(dag.find_node('spouse').x);
+        });
+
+        it('keeps two parented partners aligned with their incoming branches', () => {
+            const links: Array<[string, string]> = [
+                ['upperParent', 'upperFamily'], ['upperFamily', 'spouse'],
+                ['lowerParent', 'lowerFamily'], ['lowerFamily', 'primary'],
+                ['primary', 'couple'], ['spouse', 'couple'], ['couple', 'child'],
+            ];
+            const members = {
+                upperParent: { id: 'upperParent', name: 'A', birth_date: '1900', is_spouse: false },
+                lowerParent: { id: 'lowerParent', name: 'B', birth_date: '1910', is_spouse: false },
+                primary: { id: 'primary', name: 'Primary', birth_date: '1940', is_spouse: false },
+                spouse: { id: 'spouse', name: 'Spouse', birth_date: '1940', is_spouse: true },
+                child: { id: 'child', name: 'Child', birth_date: '1970', is_spouse: false },
+            };
+            const dag = new DagWithFamilyData(links, members, { couple: ['primary', 'spouse'] });
+
+            new DagLayout(dag, [100, 100]).run();
+
+            expect(dag.find_node('spouse').x).toBeLessThan(dag.find_node('primary').x);
+        });
     });
 });

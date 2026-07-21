@@ -199,6 +199,27 @@ export type Database = {
           },
         ]
       }
+      family_lineage_members: {
+        Row: {
+          created_at: string
+          family_id: string
+          person_id: string
+          source_submission_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          family_id: string
+          person_id: string
+          source_submission_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          family_id?: string
+          person_id?: string
+          source_submission_id?: string | null
+        }
+        Relationships: []
+      }
       family_membership_revisions: {
         Row: {
           base_revision_id: string | null
@@ -1063,6 +1084,14 @@ export type Database = {
         Args: { p_family_slugs: string[]; p_include_pending?: boolean }
         Returns: Json
       }
+      get_family_lineage_members: {
+        Args: { p_family_ids: string[] }
+        Returns: Json
+      }
+      initialize_imported_family_lineage: {
+        Args: { p_family_slug: string; p_root_person_legacy_id?: string }
+        Returns: number
+      }
       import_family_sheet: {
         Args: { p_family_name: string; p_family_slug: string; p_payload: Json }
         Returns: Json
@@ -1134,8 +1163,34 @@ export type Database = {
         }
         Returns: Json
       }
+      submit_person_merge: {
+        Args: {
+          p_anonymous_actor_secret?: string
+          p_client_request_id: string
+          p_family_id: string
+          p_fields: Json
+          p_source_person_id: string
+          p_target_person_id: string
+        }
+        Returns: Json
+      }
       unify_person: {
         Args: {
+          p_source_person_id: string
+          p_target_person_id: string
+        }
+        Returns: Json
+      }
+      admin_unify_person: {
+        Args: {
+          p_source_person_id: string
+          p_target_person_id: string
+        }
+        Returns: Json
+      }
+      admin_unify_person_resolved: {
+        Args: {
+          p_fields: Json
           p_source_person_id: string
           p_target_person_id: string
         }

@@ -77,6 +77,24 @@ describe('urlState', () => {
         expect(decodeState().transform).toEqual({ k: 1, x: 100, y: 200 });
     });
 
+    it('keeps source viewport dimensions for cross-device camera adaptation', () => {
+        const data: FamilyData = {
+            start: 'mem_0',
+            members: {
+                'mem_0': { id: 'mem_0', first_name: 'John', last_name: 'Doe', birth_date: '1990' } as any,
+            },
+            links: [],
+        };
+        buildIdMaps(data);
+        window.location.hash = '#' + encodeState('mem_0', {
+            k: 1, x: 100, y: 200, width: 1440, height: 900,
+        }, false);
+
+        expect(decodeState().transform).toEqual({
+            k: 1, x: 100, y: 200, width: 1440, height: 900,
+        });
+    });
+
     it('still decodes old long hashes with visible node state', () => {
         const data: FamilyData = {
             start: 'mem_0',

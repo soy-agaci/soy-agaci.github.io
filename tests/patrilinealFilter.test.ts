@@ -72,4 +72,53 @@ describe('patrilinealFilter', () => {
         expect(filtered.members['mem_1']).toBeDefined(); // Daughter is child of Root
         expect(filtered.members['mem_2']).toBeUndefined(); // Grandchild via Daughter should be excluded
     });
+
+    it('keeps a mother who has her own recorded parents', () => {
+        const data: FamilyData = {
+            start: 'son',
+            members: {
+                father: { id: 'father', name: 'Father', gen: 1, gender: 'E', is_spouse: false },
+                mother: { id: 'mother', name: 'Mother', gen: 1, gender: 'K', is_spouse: true },
+                son: { id: 'son', name: 'Son', gen: 2, gender: 'E', is_spouse: false },
+                maternalGrandfather: { id: 'maternalGrandfather', name: 'Grandfather', gen: 0, gender: 'E', is_spouse: true },
+            },
+            links: [
+                ['maternalGrandfather', 'u_maternal'], ['u_maternal', 'mother'],
+                ['father', 'u_parents'], ['mother', 'u_parents'], ['u_parents', 'son'],
+            ],
+        };
+
+        const filtered = filterPatrilineal(data);
+
+        expect(filtered.start).toBe('son');
+        expect(filtered.members.mother).toBeDefined();
+        expect(filtered.members.maternalGrandfather).toBeUndefined();
+    });
+
+    it('treats a daughter as family but not her son', () => {
+        const data: FamilyData = {
+            start: 'daughter',
+            members: {
+                father: { id: 'father', name: 'Father', gen: 1, gender: 'E' },
+                mother: { id: 'mother', name: 'Mother', gen: 1, gender: 'K' },
+                daughter: { id: 'daughter', name: 'Daughter', gen: 2, gender: 'K' },
+                son: { id: 'son', name: 'Son', gen: 3, gender: 'E' },
+            },
+            links: [
+                ['father', 'u_parents'], ['mother', 'u_parents'], ['u_parents', 'daughter'],
+                ['daughter', 'u_child'], ['u_child', 'son'],
+            ],
+        };
+
+        const filtered = filterPatrilineal(data);
+
+        expect(filtered.members.father).toBeDefined();
+        expect(filtered.members.mother).toBeDefined();
+        expect(filtered.members.daughter).toBeDefined();
+        expect(filtered.members.son).toBeUndefined();
+
+        const lineageOnly = filterPatrilineal(data, false);
+        expect(lineageOnly.members.mother).toBeUndefined();
+        expect(lineageOnly.members.daughter).toBeDefined();
+    });
 });

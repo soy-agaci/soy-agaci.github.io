@@ -5,8 +5,10 @@ import {
     loadRendererFamilyData,
     proposalFrame,
     selectedFamilySlugs,
+    toTitleCaseTurkish,
 } from '../src/services/data/familyGraphAdapter';
 import { uniqueSearchEntries } from '../src/services/data/searchIndex';
+import { REMOVED_PHOTO_URL } from '../src/constants/media';
 
 const ids = {
     family1: '10000000-0000-4000-8000-000000000001',
@@ -115,6 +117,8 @@ function graph(): FamilyGraph {
             parentLink('40000000-0000-4000-8000-000000000005', ids.a, ids.f),
         ],
         memberships: [],
+        lineage_memberships: [],
+        all_lineage_memberships: [],
         media: [{
             ...revisionBase, id: '60000000-0000-4000-8000-000000000001', person_id: ids.a,
             status: 'approved', storage_path: null, legacy_uri: 'images/alpha.jpg',
@@ -126,6 +130,11 @@ function graph(): FamilyGraph {
 }
 
 describe('family graph renderer adapter', () => {
+    it('title-cases Turkish names after punctuation', () => {
+        expect(toTitleCaseTurkish('MUSTAFA (ter BIYIKLI) HÜSEYİNOĞLU'))
+            .toBe('Mustafa (Ter Bıyıklı) Hüseyinoğlu');
+    });
+
     it('indexes a person shared by combined selected families exactly once', () => {
         const combined = graph();
         combined.memberships = [{
@@ -163,6 +172,21 @@ describe('family graph renderer adapter', () => {
         expect(Object.keys(data.members).every(id => id.startsWith('person_'))).toBe(true);
     });
 
+    it('uses the largest selected family to choose the display root', () => {
+        const base = graph();
+        base.memberships = [
+            { id: '60000000-0000-4000-8000-000000000001', family_id: ids.family1, person_id: ids.a, created_at, current_revision: null, pending_revisions: [] },
+            { id: '60000000-0000-4000-8000-000000000002', family_id: ids.family2, person_id: ids.b, created_at, current_revision: null, pending_revisions: [] },
+            { id: '60000000-0000-4000-8000-000000000003', family_id: ids.family2, person_id: ids.d, created_at, current_revision: null, pending_revisions: [] },
+        ];
+        base.lineage_memberships = [
+            { family_id: ids.family1, person_id: ids.a },
+            { family_id: ids.family2, person_id: ids.d },
+        ];
+
+        expect(familyGraphToFamilyData(base).start).toBe(`person_${ids.d}`);
+    });
+
     it('uses one union per partnership, keeps multiple partnerships distinct, and does not invent a spouse', () => {
         const { links } = familyGraphToFamilyData(graph());
         const union1 = 'u_partnership_30000000-0000-4000-8000-000000000001';
@@ -176,6 +200,12 @@ describe('family graph renderer adapter', () => {
         expect(links).toContainEqual([`person_${ids.a}`, solo]);
         expect(links).toContainEqual([solo, `person_${ids.f}`]);
         expect(links.filter(([source, target]) => source === `person_${ids.a}` && target.startsWith('u_partnership_'))).toHaveLength(2);
+    });
+
+    it('rejects two-parent data without a persisted partnership', () => {
+        const base = graph();
+        base.partnerships = [];
+        expect(() => familyGraphToFamilyData(base)).toThrow('Missing persisted partnership');
     });
 
     it('selects pending revisions only when requested', () => {
@@ -197,6 +227,8 @@ describe('family graph renderer adapter', () => {
             .toBe('Pending Alpha Example');
         expect(familyGraphToFamilyData(competing, '80000000-0000-4000-8000-000000000002').members[`person_${ids.a}`].name)
             .toBe('Competing Alpha Example');
+        expect(familyGraphToFamilyData(competing, '*').members[`person_${ids.a}`].name)
+            .toBe('Competing Alpha Example');
         expect(competing.people[0].pending_revisions).toHaveLength(2);
     });
 
@@ -213,6 +245,18 @@ describe('family graph renderer adapter', () => {
         expect(familyGraphToFamilyData(pending).members[`person_${ids.a}`].image_path).toBe('images/alpha.jpg');
         expect(familyGraphToFamilyData(pending, '80000000-0000-4000-8000-000000000001')
             .members[`person_${ids.a}`].image_path).toBe('https://example.test/selected.webp');
+    });
+
+    it('hides a photo when its newest visible media revision is the removal marker', () => {
+        const pending = graph();
+        pending.media.push({
+            ...pending.media[0], id: '60000000-0000-4000-8000-000000000099', status: 'pending',
+            submission_id: '80000000-0000-4000-8000-000000000001', legacy_uri: REMOVED_PHOTO_URL,
+            created_at: '2026-01-02T00:00:00Z',
+        });
+
+        expect(familyGraphToFamilyData(pending).members[`person_${ids.a}`].image_path).toBe('images/alpha.jpg');
+        expect(familyGraphToFamilyData(pending, '*').members[`person_${ids.a}`].image_path).toBeUndefined();
     });
 
     it('frames a newly proposed relative and its immediate relationship neighborhood', () => {
@@ -296,6 +340,7 @@ describe('family graph renderer adapter', () => {
         base.people.push(person(spouseParentId, 'SpouseParent', 'male'));
         base.parent_links.push(pLink('40000000-0000-4000-8000-000000000099', spouseParentId, spouseId));
         base.partnerships.push(partner('30000000-0000-4000-8000-000000000099', ids.a, spouseId));
+        base.lineage_memberships = [{ family_id: ids.family1, person_id: ids.a }];
 
         const data = familyGraphToFamilyData(base);
         // Alpha (ids.a) is root descendant, so Alpha.is_spouse is false
@@ -304,11 +349,12 @@ describe('family graph renderer adapter', () => {
         expect(data.members[`person_${spouseId}`].is_spouse).toBe(true);
     });
 
-    it('dynamically computes primary person based on family root lineage', () => {
+    it('renders partnerships without a persisted family root', () => {
         const base = graph();
+        base.families.forEach(family => { family.root_person_id = null; });
         const p1 = ids.c;
         const p2 = ids.d;
-        base.partnerships = [{
+        base.partnerships.push({
             id: '30000000-0000-4000-8000-000000000099',
             person1_id: p1 < p2 ? p1 : p2,
             person2_id: p1 < p2 ? p2 : p1,
@@ -321,11 +367,43 @@ describe('family graph renderer adapter', () => {
                 date_start: null, date_end: null, date_text: null, status_text: null,
             },
             pending_revisions: [],
-        }];
+        });
 
         const data = familyGraphToFamilyData(base);
         expect(data.members[`person_${p1}`]).toBeDefined();
         expect(data.members[`person_${p2}`]).toBeDefined();
+    });
+
+    it('distinguishes selected-lineage membership from assignment to any family', () => {
+        const base = graph();
+        base.lineage_memberships = [{ family_id: ids.family1, person_id: ids.a }];
+        base.all_lineage_memberships = [
+            ...base.lineage_memberships,
+            { family_id: ids.family2, person_id: ids.b },
+        ];
+
+        const data = familyGraphToFamilyData(base);
+        expect(data.members[`person_${ids.a}`]).toMatchObject({ lineage_member: true, has_family: true });
+        expect(data.members[`person_${ids.b}`]).toMatchObject({ lineage_member: false, has_family: true });
+        expect(data.members[`person_${ids.c}`]).toMatchObject({ lineage_member: false, has_family: false });
+    });
+
+    it('treats a pending family assignment as assigned only in pending view', () => {
+        const base = graph();
+        base.memberships = [{
+            id: '60000000-0000-4000-8000-000000000001', family_id: ids.family2, person_id: ids.c,
+            created_at, current_revision: null, pending_revisions: [{
+                ...revisionBase, id: '61000000-0000-4000-8000-000000000001',
+                submission_id: '80000000-0000-4000-8000-000000000001', status: 'pending',
+            }],
+        }];
+
+        expect(familyGraphToFamilyData(base).members[`person_${ids.c}`].has_family).toBe(false);
+        const pending = familyGraphToFamilyData(base, '*').members;
+        for (const id of [ids.a, ids.c, ids.e, ids.f]) {
+            expect(pending[`person_${id}`]).toMatchObject({ has_family: true, lineage_member: true });
+        }
+        for (const id of [ids.b, ids.d]) expect(pending[`person_${id}`].has_family).toBe(false);
     });
 });
 

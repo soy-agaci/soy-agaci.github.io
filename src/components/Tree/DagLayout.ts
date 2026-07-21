@@ -71,6 +71,24 @@ export class DagLayout {
                 border = next;
             }
         }
+
+        const visibleNodes = new Set(this.dag.nodes().map(node => node.data));
+        for (const pair of Object.values(this.dag.partnershipGroups)) {
+            if (!pair.every(id => visibleNodes.has(id))) continue;
+            const partners = pair.map(id => this.dag.find_node(id));
+            const primary = partners.find(node => !node.added_data.input?.is_spouse);
+            if (!primary) continue;
+            const targetGeneration = primary.added_relations!.layout.generation_id;
+            for (const spouse of partners.filter(node => node.added_data.input?.is_spouse)) {
+                const layout = spouse.added_relations!.layout;
+                if (layout.generation_id === targetGeneration) continue;
+                const previous = this.generations.get(layout.generation_id)!;
+                previous.splice(previous.indexOf(spouse), 1);
+                layout.generation_id = targetGeneration;
+                const generation = this.generations.get(targetGeneration)!;
+                generation.splice(generation.indexOf(primary) + 1, 0, spouse);
+            }
+        }
     }
 
     assign_grouping() {
@@ -195,7 +213,8 @@ export class DagLayout {
                 for (const union of adjacentUnions) {
                     const pair = this.dag.partnershipGroups[union.data];
                     if (pair && pair.includes(n.data) && pair.every(id => generationMembers.has(id))) {
-                        return this.dag.find_node(pair[0]);
+                        return this.dag.find_node(pair.find(id =>
+                            !this.dag.find_node(id).added_data.input?.is_spouse) ?? pair[0]);
                     }
                 }
             }
@@ -222,8 +241,7 @@ export class DagLayout {
             // If n is Union, parent is Member.
             
             // We want to group based on immediate parent position.
-            const parent = parents[0]; // Usually enough for grouping
-            return parent ? parent.x : undefined;
+            return this.get_average_x(parents);
         };
 
         // Assign coordinates to all nodes of one generation
@@ -286,6 +304,12 @@ export class DagLayout {
                 
                 // Ensure Primary is first in group, spouses follow
                 group.sort((x, y) => {
+                    const xParents = this.dag.parents(x);
+                    const yParents = this.dag.parents(y);
+                    if (xParents.length && yParents.length) {
+                        const byParent = this.get_average_x(xParents)! - this.get_average_x(yParents)!;
+                        if (byParent !== 0) return byParent;
+                    }
                     if (x === p) return -1;
                     if (y === p) return 1;
                     // Sort spouses by data/ID for consistency

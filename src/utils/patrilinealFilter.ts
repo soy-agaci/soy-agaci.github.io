@@ -1,7 +1,7 @@
 import { FamilyData } from '../types/types';
 
 // Filter data to show only patrilineal descendants
-export function filterPatrilineal(data: FamilyData): FamilyData {
+export function filterPatrilineal(data: FamilyData, includePartners = true): FamilyData {
     const filtered: FamilyData = {
         start: "", // Will be set after determining lineage
         members: {},
@@ -23,6 +23,25 @@ export function filterPatrilineal(data: FamilyData): FamilyData {
         }
     }
 
+    const explicitLineage = new Set(Object.entries(data.members)
+        .filter(([, member]) => member.lineage_member).map(([id]) => id));
+    if (Object.values(data.members).some(member => member.lineage_member !== undefined)) {
+        const displayedMembers = new Set(explicitLineage);
+        if (includePartners) {
+            for (const parents of Object.values(unionToParents)) {
+                if (parents.some(parent => explicitLineage.has(parent))) {
+                    for (const parent of parents) displayedMembers.add(parent);
+                }
+            }
+        }
+        for (const id of displayedMembers) filtered.members[id] = data.members[id];
+        filtered.links = data.links.filter(([from, to]) =>
+            (from.startsWith('u_') || displayedMembers.has(from))
+            && (to.startsWith('u_') || displayedMembers.has(to)));
+        filtered.start = displayedMembers.has(data.start) ? data.start : [...explicitLineage][0] ?? data.start;
+        return filtered;
+    }
+
     // Track which members are in the male lineage (Strictly Father -> Son)
     const maleLineage = new Set<string>();
     const processed = new Set<string>();
@@ -34,7 +53,9 @@ export function filterPatrilineal(data: FamilyData): FamilyData {
         const member = data.members[memberId];
         // Assuming member.gen is available and numeric
         const gen = (member as any).gen;
-        if (!member.is_spouse && typeof gen === 'number' && gen < lowestGen) {
+        const currentRoot = data.members[actualRoot];
+        if (!member.is_spouse && typeof gen === 'number'
+            && (gen < lowestGen || (gen === lowestGen && member.gender === 'E' && currentRoot?.gender !== 'E'))) {
             lowestGen = gen;
             actualRoot = memberId;
         }
@@ -130,35 +151,12 @@ export function filterPatrilineal(data: FamilyData): FamilyData {
         }
     }
 
-    // Add spouses of displayed members
-    for (const memberId in data.members) {
-        const member = data.members[memberId];
-        if (member.is_spouse) {
-            // Check if partner is displayed
-            const parentUnion = childToUnion[memberId];
-            if (parentUnion) {
-                const parents = unionToParents[parentUnion] || [];
-                for (const parentId of parents) {
-                    if (displayedMembers.has(parentId)) {
-                        displayedMembers.add(memberId);
-                        break;
-                    }
-                }
-            } else {
-                // Spouse without parent union - check unions they're part of
-                for (const link of data.links) {
-                    const [from, to] = link;
-                    if (from === memberId && to.startsWith('u_')) {
-                        // This spouse is in a union
-                        const partners = unionToParents[to] || [];
-                        for (const partnerId of partners) {
-                            if (partnerId !== memberId && displayedMembers.has(partnerId)) {
-                                displayedMembers.add(memberId);
-                                break;
-                            }
-                        }
-                    }
-                }
+    // Keep co-parents/spouses of lineage members, even when that spouse has parents of their own.
+    const lineageAndChildren = new Set(displayedMembers);
+    if (includePartners) {
+        for (const parents of Object.values(unionToParents)) {
+            if (parents.some(parentId => lineageAndChildren.has(parentId))) {
+                for (const parentId of parents) displayedMembers.add(parentId);
             }
         }
     }

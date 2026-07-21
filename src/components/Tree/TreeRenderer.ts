@@ -31,6 +31,8 @@ export class TreeRenderer {
     }
 
     draw_nodes(nodes: D3Node[], current_node: D3Node) {
+        const originX = Number.isFinite(current_node.added_data.y0) ? current_node.added_data.y0! : current_node.y;
+        const originY = Number.isFinite(current_node.added_data.x0) ? current_node.added_data.x0! : current_node.x;
         // Sort in order to draw members on top of family nodes
         let nodes_to_draw = Array.from(nodes);
         nodes_to_draw.sort((node_1, node_2) => {
@@ -48,7 +50,7 @@ export class TreeRenderer {
         let node_enter_group = nodes_selected.enter()
             .append("g")
             .attr("class", "node")
-            .attr("transform", _ => "translate(" + current_node.added_data.y0 + "," + current_node.added_data.x0 + ")")
+            .attr("transform", `translate(${originX},${originY})`)
             .attr("visible", "true");
 
         // Add the nodes' labels
@@ -186,6 +188,10 @@ export class TreeRenderer {
     }
 
     draw_links(links: any[], current_node: D3Node) {
+        const origin = {
+            x: Number.isFinite(current_node.added_data.x0) ? current_node.added_data.x0! : current_node.x,
+            y: Number.isFinite(current_node.added_data.y0) ? current_node.added_data.y0! : current_node.y,
+        };
         function get_curved_edge(s: any, d: any) {
             return `M ${s.y} ${s.x} C ${(s.y + d.y) / 2} ${s.x}, 
 				${(s.y + d.y) / 2} ${d.x}, 
@@ -195,8 +201,7 @@ export class TreeRenderer {
         let link = this.g.selectAll("path.link").data(links, (link: any) => link.source.data + "_" + link.target.data);
 
         let link_enter = link.enter().insert("path", "g").attr("class", "link").attr("d", function () {
-            let o = { x: current_node.added_data.x0, y: current_node.added_data.y0 };
-            return get_curved_edge(o, o);
+            return get_curved_edge(origin, origin);
         });
 
         let link_update = link_enter.merge(link as any);

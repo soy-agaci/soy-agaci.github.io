@@ -17,9 +17,11 @@
     "test:local-step7": "npm run verify:local",
     "import:sheet": "tsx tools/import-sheet.ts",
     "import:unify": "tsx tools/import-and-unify.ts",
+    "reseed:local": "node --env-file=.env --import tsx tools/reseed-local-from-remote.ts",
     "unify:person": "tsx tools/unify-people.ts",
     "verify:remote": "tsx tools/verify-remote.ts",
-    "admin": "tsx tools/admin.ts"
+    "admin": "tsx tools/admin.ts",
+    "admin:session": "tsx tools/dev-admin-session.ts"
   },
   "repository": {
     "type": "git",

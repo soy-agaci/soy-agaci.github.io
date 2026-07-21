@@ -1,5 +1,8 @@
 import type { FamilyData, Member } from '../../types/types';
 import { getFamilyGraphBySlugs, normalizeFamilySlugs, type FamilyGraph } from './familyRepository';
+import { localSupabaseUrl } from '../supabase/localUrl';
+import { REMOVED_PHOTO_URL } from '../../constants/media';
+import { paternalLineage } from './familyLineage';
 
 type RevisionEntity<T> = { current_revision: T | null; pending_revisions: T[] };
 
@@ -7,6 +10,7 @@ function revision<T extends { submission_id: string | null }>(
     entity: RevisionEntity<T>,
     proposalId?: string,
 ): T | null {
+    if (proposalId === '*') return entity.pending_revisions[entity.pending_revisions.length - 1] ?? entity.current_revision;
     return proposalId
         ? entity.pending_revisions.find(candidate => candidate.submission_id === proposalId) ?? entity.current_revision
         : entity.current_revision;
@@ -29,22 +33,8 @@ function dateText(event: { date_text: string | null; date_start: string | null }
 
 export function toTitleCaseTurkish(str: string): string {
     if (!str) return str;
-    return str.split(/\s+/).map(word => {
-        if (!word) return "";
-        const first = word.charAt(0);
-        const rest = word.slice(1);
-
-        let upperFirst = first.toLocaleUpperCase('tr-TR');
-        if (first === 'i') upperFirst = 'İ';
-        else if (first === 'ı') upperFirst = 'I';
-
-        let lowerRest = rest.toLocaleLowerCase('tr-TR');
-        lowerRest = lowerRest
-            .replace(/I/g, 'ı')
-            .replace(/İ/g, 'i');
-
-        return upperFirst + lowerRest;
-    }).join(' ');
+    return str.toLocaleLowerCase('tr-TR').replace(/(^|[^\p{L}])(\p{L})/gu,
+        (_match, prefix: string, letter: string) => prefix + letter.toLocaleUpperCase('tr-TR'));
 }
 
 export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string): FamilyData {
@@ -90,12 +80,19 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
     }
 
     const visibleMedia = graph.media.filter(media => media.status === 'approved'
-        || (media.status === 'pending' && media.submission_id === proposalId));
-    visibleMedia.sort((left, right) => Number(left.status === 'pending') - Number(right.status === 'pending'));
+        || (media.status === 'pending' && (proposalId === '*' || media.submission_id === proposalId)));
+    visibleMedia.sort((left, right) => Number(left.status === 'pending') - Number(right.status === 'pending')
+        || left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id));
     for (const media of visibleMedia) {
         const member = members[personId(media.person_id)];
+        if (member && media.legacy_uri === REMOVED_PHOTO_URL) {
+            member.image_path = undefined;
+            continue;
+        }
         if (member && (media.mime_type.startsWith('image/') || media.legacy_uri)) {
-            member.image_path = media.legacy_uri ?? media.storage_path ?? undefined;
+            let path = media.legacy_uri ?? media.storage_path ?? undefined;
+            if (path) path = localSupabaseUrl(path, 'http:');
+            member.image_path = path;
         }
     }
 
@@ -132,7 +129,10 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
     for (const [child, rawParents] of parentsByChild) {
         const parents = [...new Set(rawParents)].sort();
         const partnership = parents.length === 2 ? partnershipByPair.get(parents.join(':')) : undefined;
-        const unionId = partnership ? `u_partnership_${partnership.id}` : `u_parents_${parents.join('_')}`;
+        if (parents.length === 2 && !partnership) {
+            throw new Error(`Missing persisted partnership for parents of ${child}`);
+        }
+        const unionId = partnership ? `u_partnership_${partnership.id}` : `u_parents_${parents[0]}`;
         for (const parent of parents) addLink(personId(parent), unionId);
         addLink(unionId, personId(child));
     }
@@ -155,23 +155,52 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
         if (!connected.has(personId(id))) addLink(personId(id), `u_isolated_${id}`);
     }
 
-    const root = graph.families.find(family => family.root_person_id && visiblePeople.has(family.root_person_id))?.root_person_id
-        ?? [...visiblePeople].sort()[0];
-
-    const rootDescendants = new Set<string>();
-    if (root) {
-        const queue = [root];
-        rootDescendants.add(root);
-        while (queue.length > 0) {
-            const current = queue.shift()!;
-            for (const [childId, parents] of parentsByChild.entries()) {
-                if (parents.includes(current) && !rootDescendants.has(childId)) {
-                    rootDescendants.add(childId);
-                    queue.push(childId);
+    const lineagePeople = new Set((graph.lineage_memberships ?? []).map(item => item.person_id));
+    const assignedPeople = new Set((graph.all_lineage_memberships ?? graph.lineage_memberships ?? [])
+        .map(item => item.person_id));
+    const pendingLineageByFamily = new Map<string, Set<string>>();
+    if (proposalId) {
+        for (const membership of graph.memberships) {
+            if (membership.pending_revisions.some(item => proposalId === '*' || item.submission_id === proposalId)) {
+                const pendingLineage = pendingLineageByFamily.get(membership.family_id) ?? new Set<string>();
+                for (const person of paternalLineage(graph, membership.person_id, proposalId)) {
+                    pendingLineage.add(person);
+                    assignedPeople.add(person);
                 }
+                pendingLineageByFamily.set(membership.family_id, pendingLineage);
+            }
+        }
+        for (const proposal of graph.family_creation_proposals ?? []) {
+            if (proposalId === '*' || proposal.submission_id === proposalId) {
+                for (const person of paternalLineage(graph, proposal.root_person_id, proposalId)) assignedPeople.add(person);
             }
         }
     }
+    const familySizes = new Map<string, number>();
+    for (const membership of graph.memberships) {
+        familySizes.set(membership.family_id, (familySizes.get(membership.family_id) ?? 0) + 1);
+    }
+    const displayFamily = graph.families[0] && graph.families.reduce((largest, family) =>
+        (familySizes.get(family.id) ?? 0) > (familySizes.get(largest.id) ?? 0) ? family : largest);
+    const displayLineage = new Set((graph.lineage_memberships ?? [])
+        .filter(item => !displayFamily || item.family_id === displayFamily.id).map(item => item.person_id));
+    const selectedFamilyIds = new Set(graph.families.map(family => family.id));
+    for (const [familyId, pendingLineage] of pendingLineageByFamily) {
+        if (selectedFamilyIds.has(familyId)) for (const person of pendingLineage) lineagePeople.add(person);
+    }
+    if (displayFamily) {
+        for (const person of pendingLineageByFamily.get(displayFamily.id) ?? []) {
+            displayLineage.add(person);
+        }
+    }
+    const root = [...visiblePeople].sort((left, right) => {
+        const leftMember = members[personId(left)];
+        const rightMember = members[personId(right)];
+        return Number(!displayLineage.has(left)) - Number(!displayLineage.has(right))
+            || (leftMember.gen ?? Infinity) - (rightMember.gen ?? Infinity)
+            || Number(rightMember.gender === 'E') - Number(leftMember.gender === 'E')
+            || left.localeCompare(right);
+    })[0];
 
     const isSpouseMap = new Set<string>();
     for (const partnership of graph.partnerships) {
@@ -179,26 +208,30 @@ export function familyGraphToFamilyData(graph: FamilyGraph, proposalId?: string)
         const p2 = partnership.person2_id;
         if (!visiblePeople.has(p1) || !visiblePeople.has(p2)) continue;
 
-        const p1IsDescendant = rootDescendants.has(p1);
-        const p2IsDescendant = rootDescendants.has(p2);
-
-        if (p1IsDescendant && !p2IsDescendant) {
-            isSpouseMap.add(p2);
-        } else if (p2IsDescendant && !p1IsDescendant) {
-            isSpouseMap.add(p1);
+        if (lineagePeople.has(p1) !== lineagePeople.has(p2)) {
+            isSpouseMap.add(lineagePeople.has(p1) ? p2 : p1);
+        }
+    }
+    for (const parents of parentsByChild.values()) {
+        if (parents.some(parent => lineagePeople.has(parent))) {
+            for (const parent of parents) if (!lineagePeople.has(parent)) isSpouseMap.add(parent);
         }
     }
 
     for (const id of visiblePeople) {
         members[personId(id)].is_spouse = id !== root && isSpouseMap.has(id);
+        members[personId(id)].lineage_member = lineagePeople.has(id);
+        members[personId(id)].has_family = assignedPeople.has(id);
     }
 
-    return {
+    const data: FamilyData = {
         start: root ? personId(root) : '',
         members,
         links: [...links].sort().map(link => link.split('\0') as [string, string]),
         partnershipGroups,
     };
+
+    return data;
 }
 
 export function selectedFamilySlugs(search: string, configuredSlugs = ''): string[] {

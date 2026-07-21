@@ -3,6 +3,29 @@ import { DagWithFamilyData, dag_with_family_data, is_member } from './dagWithFam
 import { DagLayout } from './DagLayout';
 import { D3Node, FamilyData } from '../../types/types';
 import { TreeRenderer } from './TreeRenderer';
+import { adaptToViewport, fitPoints, keepPointStationary, keepTreeInViewport, type ViewTransform, type ViewportSize } from './viewport';
+import { LAYOUT_CONSTANTS } from '../../constants/layout';
+
+export function shortestLineagePath(dag: DagWithFamilyData, startId: string, targetId: string): D3Node[] | null {
+    const startNode = dag.find_node(startId);
+    const targetNode = dag.find_node(targetId);
+    if (!startNode || !targetNode) return null;
+
+    const queue: { node: D3Node, path: D3Node[] }[] = [{ node: startNode, path: [startNode] }];
+    const visited = new Set<string>([startId]);
+    while (queue.length) {
+        const { node, path } = queue.shift()!;
+        if (node.data === targetId) return path;
+        for (const neighbor of dag.first_level_adjacency(node)) {
+            if (is_member(neighbor) && neighbor.data !== startId && neighbor.data !== targetId
+                && neighbor.added_data.input?.lineage_member === false) continue;
+            if (visited.has(neighbor.data)) continue;
+            visited.add(neighbor.data);
+            queue.push({ node: neighbor, path: [...path, neighbor] });
+        }
+    }
+    return null;
+}
 
 
 export class Familienbaum {
@@ -19,7 +42,7 @@ export class Familienbaum {
     renderer: TreeRenderer;
     private viewAnchorId: string | null = null;
     private viewMode = -1;
-    private paternalAncestorsOnly: boolean;
+    private constrainingZoom = false;
 
     // Callbacks
     onViewChange?: () => void;
@@ -30,17 +53,22 @@ export class Familienbaum {
         input: FamilyData,
         svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>,
         onViewChange?: () => void,
-        paternalAncestorsOnly = false,
     ) {
         // Remember the inputs
         this.data = input;
         this.svg = svg;
         this.onViewChange = onViewChange;
-        this.paternalAncestorsOnly = paternalAncestorsOnly;
 
         // Prepare things related to d3 and SVG
         this.g = this.svg.append("g");
         this.zoom = d3.zoom<SVGSVGElement, unknown>().on("zoom", (event) => {
+            const constrained = this.constrainTransform(event.transform);
+            if (!this.constrainingZoom && (constrained.x !== event.transform.x || constrained.y !== event.transform.y)) {
+                this.constrainingZoom = true;
+                this.svg.call(this.zoom.transform, d3.zoomIdentity.translate(constrained.x, constrained.y).scale(constrained.k));
+                this.constrainingZoom = false;
+                return;
+            }
             this.g.attr("transform", event.transform);
             if (this.onViewChange) this.onViewChange();
         });
@@ -54,7 +82,7 @@ export class Familienbaum {
         // Initialize Renderer
         this.renderer = new TreeRenderer(
             this.g,
-            (node) => this.handleNodeClick(node),
+            (node, event) => this.handleNodeClick(node, event),
             (node) => this.handleNodeDblClick(node),
             (node) => this.handleEditClick(node)
         );
@@ -113,7 +141,20 @@ export class Familienbaum {
         }
     }
 
+    restoreVisibility(visibleNodes: Set<string>, focusId = this.data.start) {
+        for (const node of this.dag_all.nodes()) {
+            node.added_data.is_visible = visibleNodes.has(node.data) || node.data === focusId;
+        }
+        for (const node of this.dag_all.nodes()) {
+            if (is_member(node)) continue;
+            node.added_data.is_visible = this.dag_all.parents(node).some(parent => parent.added_data.is_visible)
+                && (node.children?.() ?? []).some(child => child.added_data.is_visible);
+        }
+    }
+
     updateData(newData: FamilyData, restoreVisibleNodes?: Set<string>) {
+        const previousDag = this.dag;
+        const previousPositions = new Map(previousDag?.nodes().map(node => [node.data, { x: node.x, y: node.y }]) ?? []);
         // 1. Capture current visibility state from the existing DAG (if not provided)
         let visibleNodes = restoreVisibleNodes;
         if (!visibleNodes) {
@@ -142,18 +183,14 @@ export class Familienbaum {
             return;
         }
 
-        // Set root coordinates (keep center)
-        let h = parseFloat(this.svg.attr("height"));
-        let w = parseFloat(this.svg.attr("width"));
-        if (isNaN(h)) h = window.innerHeight || 800;
-        if (isNaN(w)) w = window.innerWidth || 1000;
-
-        node_of_dag_all.added_data.x0 = h / 2;
-        node_of_dag_all.added_data.y0 = w / 2;
-
         // Restore visibility
         let restoredCount = 0;
         for (let node of this.dag_all.nodes()) {
+            const previous = previousPositions.get(node.data);
+            if (previous) {
+                node.x = node.added_data.x0 = previous.x;
+                node.y = node.added_data.y0 = previous.y;
+            }
             if (visibleNodes.has(node.data)) {
                 node.added_data.is_visible = true;
                 restoredCount++;
@@ -183,11 +220,16 @@ export class Familienbaum {
         }
 
         // 4. Redraw
-        this.draw(false);
+        this.draw(false, this.data.start, false);
+        if (!previousDag?.nodes().some(node => node.data === newData.start)) this.ensureNodeVisible(newData.start);
     }
 
-    handleNodeClick(node: D3Node) {
+    handleNodeClick(node: D3Node, event?: { shiftKey?: boolean }) {
         if (!is_member(node)) return;
+        if (event?.shiftKey) {
+            this.handleEditClick(node);
+            return;
+        }
         const sidebar = document.getElementById('family-sidebar');
         const sidebarIsOpen = sidebar && sidebar.classList.contains('active');
         if (sidebarIsOpen) {
@@ -209,20 +251,25 @@ export class Familienbaum {
         this.handleEditClick(node);
     }
 
-    setPaternalAncestorsOnly(value: boolean) {
-        this.paternalAncestorsOnly = value;
-    }
-
     click(current_node_id: string) {
         const node = this.dag_all.find_node(current_node_id);
         if (!is_member(node)) return;
-        if (this.viewAnchorId !== current_node_id) {
-            this.viewAnchorId = current_node_id;
-            this.viewMode = 0;
-        } else {
-            this.viewMode = (this.viewMode + 1) % 5;
-        }
-        this.applyView(node);
+        const currentVisible = this.visibleNodeIds();
+        const firstMode = this.viewAnchorId === current_node_id ? (this.viewMode + 1) % 5 : 0;
+        let candidate = firstMode;
+        let selectedMode = firstMode;
+        do {
+            this.setView(node, candidate);
+            if (!this.sameNodeSet(currentVisible, this.visibleNodeIds())) {
+                selectedMode = candidate;
+                break;
+            }
+            candidate = (candidate + 1) % 5;
+        } while (candidate !== firstMode);
+        this.viewAnchorId = current_node_id;
+        this.viewMode = selectedMode;
+        this.setView(node, this.viewMode);
+        this.draw(true, node.data, false);
     }
 
     private clearView() {
@@ -239,13 +286,12 @@ export class Familienbaum {
             for (const union of this.dag_all.parents(child)) {
                 union.added_data.is_visible = true;
                 const parents = this.dag_all.parents(union);
-                const ancestors = this.paternalAncestorsOnly
-                    ? parents.filter(parent => parent.added_data.input?.gender === 'E')
-                    : parents;
-                for (const parent of ancestors) {
+                for (const parent of parents) {
                     parent.added_data.is_visible = true;
-                    if (parent.data !== child.data) queue.push(parent);
                 }
+                const father = parents.find(parent => parent.added_data.input?.gender === 'E')
+                    ?? parents.find(parent => !parent.added_data.input?.is_spouse);
+                if (father && father.data !== child.data) queue.push(father);
             }
         }
     }
@@ -272,14 +318,21 @@ export class Familienbaum {
         }
     }
 
-    private applyView(node: D3Node) {
+    private setView(node: D3Node, mode: number) {
         this.clearView();
-        if (this.viewMode === 0) this.showAncestors(node);
-        if (this.viewMode === 1) { this.showAncestors(node); this.showImmediateFamily(node); }
-        if (this.viewMode === 2) { this.showAncestors(node); this.showAllDescendants(node); }
-        if (this.viewMode === 3) this.showAllDescendants(node);
-        if (this.viewMode === 4) this.showImmediateFamily(node);
-        this.draw(true, node.data);
+        if (mode === 0) this.showAncestors(node);
+        if (mode === 1) { this.showAncestors(node); this.showImmediateFamily(node); }
+        if (mode === 2) { this.showAncestors(node); this.showAllDescendants(node); }
+        if (mode === 3) this.showAllDescendants(node);
+        if (mode === 4) this.showImmediateFamily(node);
+    }
+
+    private visibleNodeIds(): Set<string> {
+        return new Set(this.dag_all.nodes().filter(node => is_member(node) && node.added_data.is_visible).map(node => node.data));
+    }
+
+    private sameNodeSet(left: Set<string>, right: Set<string>): boolean {
+        return left.size === right.size && [...left].every(id => right.has(id));
     }
 
     showDescendants(node: D3Node) {
@@ -331,7 +384,7 @@ export class Familienbaum {
         }
     }
 
-    draw(recenter = true, current_node_id = this.data.start, animate = true) {
+    draw(_recenter = true, current_node_id = this.data.start, animate = true) {
         // Ensure current node and its path to parents are visible
         // This prevents the node from disappearing if intermediate unions were accidentally hidden
         try {
@@ -397,6 +450,8 @@ export class Familienbaum {
             for (let link of this.dag_all.links())
                 if (link.source.added_data.is_visible && link.target.added_data.is_visible)
                     links.push([link.source.data, link.target.data]);
+
+            if (links.length === 0) links.push([current_node_id, `u_isolated_${current_node_id}`]);
         }
 
         // Create DAG on filtered edges
@@ -427,28 +482,6 @@ export class Familienbaum {
             }
         }
 
-        // Anchor View: Keep current_node stationary if not recentering
-        if (!recenter) {
-            // SVG X (Horizontal) is mapped to node.y
-            // SVG Y (Vertical) is mapped to node.x
-            // added_data.y0 stores previous node.y
-            // added_data.x0 stores previous node.x
-            const oldSvgX = current_node.added_data.y0;
-            const oldSvgY = current_node.added_data.x0;
-
-            if (oldSvgX !== undefined && oldSvgY !== undefined) {
-                const dSvgX = oldSvgX - current_node.y;
-                const dSvgY = oldSvgY - current_node.x;
-
-                if (dSvgX !== 0 || dSvgY !== 0) {
-                    for (let node of this.dag.nodes()) {
-                        node.y += dSvgX;
-                        node.x += dSvgY;
-                    }
-                }
-            }
-        }
-
         // Save state to localStorage
         try {
             localStorage.setItem('soyagaci_last_node', current_node.data);
@@ -462,13 +495,13 @@ export class Familienbaum {
         this.renderer.draw_links(this.dag.links(), current_node);
         this.renderer.transition_milliseconds = previousRendererDuration;
 
-        // Recenter the entire DAG to window
-        if (recenter) {
-            const tx = current_node.added_data.y0! - current_node.y;
-            const ty = current_node.added_data.x0! - current_node.x;
-
-            if (!isNaN(tx) && !isNaN(ty)) {
-                const transform = d3.zoomTransform(this.g.node()!).translate(tx, ty);
+        // Preserve the focused node's screen position while the layout moves around it.
+        const oldPoint: [number, number] = [current_node.added_data.y0!, current_node.added_data.x0!];
+        if (oldPoint.every(Number.isFinite)) {
+            const current = d3.zoomTransform(this.g.node()!);
+            const next = keepPointStationary(current, oldPoint, [current_node.y, current_node.x]);
+            if (Number.isFinite(next.x) && Number.isFinite(next.y)) {
+                const transform = d3.zoomIdentity.translate(next.x, next.y).scale(next.k);
                 if (animate) {
                     this.svg.transition()
                         .duration(this.transition_milliseconds)
@@ -486,6 +519,78 @@ export class Familienbaum {
 
         // Update URL after drawing to reflect new state
         if (this.onViewChange) this.onViewChange();
+    }
+
+    getViewport(): ViewportSize {
+        return {
+            width: parseFloat(this.svg.attr("width")) || window.innerWidth || 1000,
+            height: parseFloat(this.svg.attr("height")) || window.innerHeight || 800,
+        };
+    }
+
+    getTransform(): ViewTransform {
+        const transform = d3.zoomTransform(this.g.node()!);
+        return { k: transform.k, x: transform.x, y: transform.y, ...this.getViewport() };
+    }
+
+    private constrainTransform(transform: ViewTransform): ViewTransform {
+        const nodes = this.dag?.nodes().filter(is_member) ?? [];
+        return keepTreeInViewport(
+            transform,
+            this.getViewport(),
+            nodes.map(node => [node.y, node.x]),
+            LAYOUT_CONSTANTS.NODE_SIZE * transform.k,
+        );
+    }
+
+    restoreTransform(transform: ViewTransform) {
+        let point: [number, number] | undefined;
+        try {
+            const node = this.dag?.find_node(this.data.start);
+            if (node) point = [node.y, node.x];
+        } catch (_) { /* active node is not in this view */ }
+        const next = adaptToViewport(transform, this.getViewport(), point);
+        this.svg.call(this.zoom.transform, d3.zoomIdentity.translate(next.x, next.y).scale(next.k));
+    }
+
+    resizeViewport(previous: ViewportSize) {
+        this.info.attr("x", this.getViewport().width - 16);
+        this.restoreTransform({ ...this.getTransform(), ...previous });
+    }
+
+    ensureNodeVisible(nodeId: string) {
+        let node: D3Node;
+        try { node = this.dag!.find_node(nodeId); } catch (_) { return; }
+        const viewport = this.getViewport();
+        const current = this.getTransform();
+        const sidebar = document.getElementById('family-sidebar');
+        const sidebarWidth = sidebar?.classList.contains('active') ? sidebar.getBoundingClientRect().width : 0;
+        const usableWidth = sidebarWidth < viewport.width - 128 ? viewport.width - sidebarWidth : viewport.width;
+        const marginX = Math.min(64, usableWidth / 4);
+        const marginY = Math.min(64, viewport.height / 4);
+        const screenX = current.k * node.y + current.x;
+        const screenY = current.k * node.x + current.y;
+        const x = current.x + Math.max(marginX, Math.min(usableWidth - marginX, screenX)) - screenX;
+        const y = current.y + Math.max(marginY, Math.min(viewport.height - marginY, screenY)) - screenY;
+        if (x !== current.x || y !== current.y) {
+            this.svg.call(this.zoom.transform, d3.zoomIdentity.translate(x, y).scale(current.k));
+        }
+    }
+
+    fitVisibleNodes() {
+        const points = this.dag?.nodes().filter(is_member).map(node => [node.y, node.x] as [number, number]) ?? [];
+        if (!points.length) return;
+        const next = fitPoints(points, this.getViewport());
+        this.svg.call(this.zoom.transform, d3.zoomIdentity.translate(next.x, next.y).scale(next.k));
+    }
+
+    resetView(data = this.data) {
+        this.viewAnchorId = null;
+        this.viewMode = -1;
+        this.data = data;
+        this.reset_dags();
+        this.draw(false, this.data.start, false);
+        this.fitVisibleNodes();
     }
 
     get_relationship_in_dag_all(node: D3Node) {
@@ -544,33 +649,9 @@ export class Familienbaum {
             return;
         }
 
-        const queue: { node: D3Node, path: D3Node[] }[] = [];
-        const visited = new Set<string>();
-
-        queue.push({ node: startNode, path: [startNode] });
-        visited.add(startNode.data);
-
-        while (queue.length > 0) {
-            const { node, path } = queue.shift()!;
-
-            if (node.data === targetId) {
-                this.highlightPath(path);
-                return;
-            }
-
-            // Get neighbors (undirected traversal)
-            // dag_all.first_level_adjacency gives neighbors (Unions for Members, Members for Unions)
-            const neighbors = this.dag_all.first_level_adjacency(node);
-
-            for (let neighbor of neighbors) {
-                if (!visited.has(neighbor.data)) {
-                    visited.add(neighbor.data);
-                    queue.push({ node: neighbor, path: [...path, neighbor] });
-                }
-            }
-        }
-
-        alert("No connection found between these people.");
+        const path = shortestLineagePath(this.dag_all, startId, targetId);
+        if (path) this.highlightPath(path);
+        else alert("No connection found between these people.");
     }
 
     highlightPath(path: D3Node[]) {
@@ -600,55 +681,43 @@ export class Familienbaum {
         const targetNode = this.dag_all.find_node(targetId);
         if (!targetNode) return;
 
-        // If already visible, just focus
-        if (targetNode.added_data.is_visible) {
-            this.draw(true, targetId);
-            return;
-        }
+        if (!targetNode.added_data.is_visible) {
+            // BFS to find nearest visible node
+            const queue: { node: D3Node, path: D3Node[] }[] = [{ node: targetNode, path: [targetNode] }];
+            const visited = new Set<string>([targetNode.data]);
+            let foundPath: D3Node[] | null = null;
 
-        // BFS to find nearest visible node
-        const queue: { node: D3Node, path: D3Node[] }[] = [];
-        const visited = new Set<string>();
-        
-        queue.push({ node: targetNode, path: [targetNode] });
-        visited.add(targetNode.data);
-
-        let foundPath: D3Node[] | null = null;
-
-        while (queue.length > 0) {
-            const { node, path } = queue.shift()!;
-
-            if (node.added_data.is_visible) {
-                foundPath = path;
-                break;
-            }
-
-            const neighbors = this.dag_all.first_level_adjacency(node);
-            for (let neighbor of neighbors) {
-                if (!visited.has(neighbor.data)) {
-                    visited.add(neighbor.data);
-                    queue.push({ node: neighbor, path: [...path, neighbor] });
+            while (queue.length > 0) {
+                const { node, path } = queue.shift()!;
+                if (node.added_data.is_visible) {
+                    foundPath = path;
+                    break;
                 }
-            }
-        }
-
-        if (foundPath) {
-            for (let n of foundPath) {
-                n.added_data.is_visible = true;
-                // Ensure Union parents are visible
-                if (!is_member(n)) {
-                    const parents = this.dag_all.parents(n);
-                    for (let p of parents) {
-                        p.added_data.is_visible = true;
+                for (const neighbor of this.dag_all.first_level_adjacency(node)) {
+                    if (!visited.has(neighbor.data)) {
+                        visited.add(neighbor.data);
+                        queue.push({ node: neighbor, path: [...path, neighbor] });
                     }
                 }
             }
-            this.draw(true, targetId);
-        } else {
-            // Fallback: Just show target
-            targetNode.added_data.is_visible = true;
-            this.showDescendants(targetNode);
-            this.draw(true, targetId);
+
+            if (foundPath) {
+                for (const node of foundPath) {
+                    node.added_data.is_visible = true;
+                    if (!is_member(node)) {
+                        for (const parent of this.dag_all.parents(node)) parent.added_data.is_visible = true;
+                    }
+                }
+            } else {
+                targetNode.added_data.is_visible = true;
+                this.showDescendants(targetNode);
+            }
         }
+
+        // Search establishes the connected/ancestor view; the next person click should advance it.
+        this.viewAnchorId = targetId;
+        this.viewMode = 0;
+        this.draw(true, targetId, false);
+        this.ensureNodeVisible(targetId);
     }
 }

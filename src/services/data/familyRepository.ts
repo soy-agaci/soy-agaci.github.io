@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getSupabaseClient } from '../supabase/client';
+import { familyTreePeople } from './familyLineage';
 
 const uuid = z.string().uuid();
 const nullableUuid = uuid.nullable();
@@ -135,6 +136,8 @@ export const familyGraphSchema = z.object({
         current_revision: membershipRevisionSchema.nullable(),
         pending_revisions: z.array(membershipRevisionSchema),
     }).strict()),
+    lineage_memberships: z.array(z.object({ family_id: uuid, person_id: uuid }).strict()).default([]),
+    all_lineage_memberships: z.array(z.object({ family_id: uuid, person_id: uuid }).strict()).default([]),
     media: z.array(z.object({
         ...revisionBase,
         person_id: uuid,
@@ -305,7 +308,8 @@ export const familyEditBundleSchema = z.object({
         + (bundle.events?.length ?? 0)
         + (bundle.partnerships?.length ?? 0)
         + (bundle.parent_links?.length ?? 0)
-        + (bundle.memberships?.length ?? 0);
+        + (bundle.memberships?.length ?? 0)
+        + (bundle.media?.length ?? 0);
     if (editCount === 0) {
         context.addIssue({ code: z.ZodIssueCode.custom, message: 'Edit bundle must contain at least one genealogy edit' });
     }
@@ -330,7 +334,7 @@ export type ModerationResult = z.infer<typeof moderationResultSchema>;
 
 export const familyCreationInputSchema = z.object({
     sourceFamilyId: uuid,
-    rootPersonId: uuid,
+    personId: uuid,
     name: z.string().trim().min(1).max(200),
     slug: z.string().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
 }).strict();
@@ -344,6 +348,8 @@ function emptyGraph(): FamilyGraph {
         partnerships: [],
         parent_links: [],
         memberships: [],
+        lineage_memberships: [],
+        all_lineage_memberships: [],
         media: [],
         sources: [],
         submissions: [],
@@ -367,6 +373,18 @@ async function addFamilyCreationProposals(graph: FamilyGraph, includePending: bo
             });
         }
     }
+    return graph;
+}
+
+async function addLineageMemberships(graph: FamilyGraph, familyIds = graph.families.map(family => family.id)): Promise<FamilyGraph> {
+    if (!graph.families.length) return graph;
+    const { data, error } = await getSupabaseClient().rpc('get_family_lineage_members', {
+        p_family_ids: familyIds,
+    });
+    if (error) throw new Error(`Failed to load family lineage: ${error.message}`);
+    graph.all_lineage_memberships = familyGraphSchema.shape.all_lineage_memberships.parse(data);
+    const selected = new Set(graph.families.map(family => family.id));
+    graph.lineage_memberships = graph.all_lineage_memberships.filter(item => selected.has(item.family_id));
     return graph;
 }
 
@@ -401,12 +419,13 @@ export async function getFamilyGraph(
     });
 
     if (error) throw new Error(`Failed to load family graph: ${error.message}`);
-    return familyGraphSchema.parse(data);
+    return addLineageMemberships(familyGraphSchema.parse(data));
 }
 
 export async function getFamilyGraphBySlugs(
     familySlugs: string[],
     includePending = false,
+    allFamilyIds?: string[],
 ): Promise<FamilyGraph> {
     const slugs = normalizeFamilySlugs(familySlugs);
     if (slugs.length === 0) return emptyGraph();
@@ -415,12 +434,42 @@ export async function getFamilyGraphBySlugs(
         p_include_pending: includePending,
     });
     if (error) throw new Error(`Failed to load family graph: ${error.message}`);
-    const graph = await addFamilyCreationProposals(familyGraphSchema.parse(data), includePending);
+    const graph = familyGraphSchema.parse(data);
     const families = new Map(graph.families.map(family => [family.slug, family]));
     const missing = slugs.filter(slug => !families.has(slug));
     if (missing.length) throw new Error(`Unknown family slug(s): ${missing.join(', ')}`);
     graph.families = slugs.map(slug => families.get(slug)!);
-    return graph;
+    if (includePending && allFamilyIds?.length) {
+        const { data: allData, error: allError } = await getSupabaseClient().rpc('get_family_graph', {
+            p_family_ids: allFamilyIds,
+            p_include_pending: true,
+        });
+        if (allError) throw new Error(`Failed to load pending family lineage: ${allError.message}`);
+        const allGraph = familyGraphSchema.parse(allData);
+        const selectedFamilies = new Set(graph.families.map(family => family.id));
+        const pendingMemberships = allGraph.memberships.filter(membership => membership.pending_revisions.length);
+        const treePeople = new Set<string>();
+        for (const membership of pendingMemberships) {
+            if (selectedFamilies.has(membership.family_id)) {
+                for (const person of familyTreePeople(allGraph, membership.person_id)) treePeople.add(person);
+            }
+        }
+        const merge = <T extends { id: string }>(left: T[], right: T[]) =>
+            [...new Map([...left, ...right].map(item => [item.id, item])).values()];
+        graph.memberships = merge(graph.memberships, [
+            ...pendingMemberships,
+            ...allGraph.memberships.filter(item => treePeople.has(item.person_id)),
+        ]);
+        graph.people = merge(graph.people, allGraph.people.filter(item => treePeople.has(item.id)));
+        graph.life_events = merge(graph.life_events, allGraph.life_events.filter(item => treePeople.has(item.person_id)));
+        graph.media = merge(graph.media, allGraph.media.filter(item => treePeople.has(item.person_id)));
+        graph.parent_links = merge(graph.parent_links, allGraph.parent_links.filter(item =>
+            treePeople.has(item.parent_id) && treePeople.has(item.child_id)));
+        graph.partnerships = merge(graph.partnerships, allGraph.partnerships.filter(item =>
+            treePeople.has(item.person1_id) && treePeople.has(item.person2_id)));
+        graph.submissions = merge(graph.submissions, allGraph.submissions);
+    }
+    return addLineageMemberships(await addFamilyCreationProposals(graph, includePending), allFamilyIds);
 }
 
 export async function submitFamilyEdit(
@@ -449,13 +498,53 @@ export async function submitFamilyCreation(
     const value = familyCreationInputSchema.parse(input);
     const { data, error } = await getSupabaseClient().rpc('submit_family_creation', {
         p_source_family_id: value.sourceFamilyId,
-        p_root_person_id: value.rootPersonId,
+        p_root_person_id: value.personId,
         p_client_request_id: uuid.parse(clientRequestId),
         p_name: value.name,
         p_slug: value.slug,
         ...(actorSecret === undefined ? {} : { p_anonymous_actor_secret: anonymousActorSecret.parse(actorSecret) }),
     });
     if (error) throw new Error('Failed to submit family creation: ' + error.message);
+    return submissionResultSchema.parse(data);
+}
+
+export const mergedPersonFieldsSchema = z.object({
+    given_name: nullableString, middle_names: nullableString, family_name: nullableString,
+    gender: nullableString, is_living: z.boolean().nullable(), summary: nullableString,
+    aliases: z.array(z.string().max(200)).max(20),
+    birth_date: nullableString, birthplace: nullableString,
+    death_date: nullableString, death_place: nullableString, occupation: nullableString,
+}).strict();
+export type MergedPersonFields = z.infer<typeof mergedPersonFieldsSchema>;
+
+export async function unifyPeople(
+    sourcePersonId: string,
+    targetPersonId: string,
+    fields: MergedPersonFields,
+): Promise<void> {
+    const { error } = await getSupabaseClient().rpc('admin_unify_person_resolved', {
+        p_source_person_id: uuid.parse(sourcePersonId),
+        p_target_person_id: uuid.parse(targetPersonId),
+        p_fields: mergedPersonFieldsSchema.parse(fields),
+    });
+    if (error) throw new Error('Kişiler birleştirilemedi: ' + error.message);
+}
+
+export async function submitPersonMerge(
+    familyId: string,
+    clientRequestId: string,
+    sourcePersonId: string,
+    targetPersonId: string,
+    fields: MergedPersonFields,
+    actorSecret?: string,
+): Promise<SubmissionResult> {
+    const { data, error } = await getSupabaseClient().rpc('submit_person_merge', {
+        p_family_id: uuid.parse(familyId), p_client_request_id: uuid.parse(clientRequestId),
+        p_source_person_id: uuid.parse(sourcePersonId), p_target_person_id: uuid.parse(targetPersonId),
+        p_fields: mergedPersonFieldsSchema.parse(fields),
+        ...(actorSecret === undefined ? {} : { p_anonymous_actor_secret: anonymousActorSecret.parse(actorSecret) }),
+    });
+    if (error) throw new Error('Kişi birleştirme önerilemedi: ' + error.message);
     return submissionResultSchema.parse(data);
 }
 

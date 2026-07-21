@@ -106,7 +106,7 @@
             <summary id="family-picker-label" class="glass-btn" title="Aileler">Aile</summary>
             <fieldset id="family-options"><legend>Aileler</legend></fieldset>
         </details>
-        <button id="revision-toggle" class="revision-toggle" type="button" aria-pressed="false">
+        <button id="revision-toggle" class="revision-toggle" type="button" aria-pressed="false" aria-label="Onaylı / bekleyen değişiklikler">
             <span title="Onaylı">✓</span>
             <span title="Bekleyen">⏳</span>
         </button>
@@ -122,11 +122,7 @@
         </button>
     </div>
 
-    <section id="proposal-panel" aria-label="Bekleyen değişiklikler" hidden>
-        <div class="proposal-header">Bekleyen değişiklikler</div>
-        <div id="proposal-status" role="status"></div>
-        <div id="proposal-list"></div>
-    </section>
+    <div id="app-toast" role="status" aria-live="polite" hidden></div>
 
     <!-- Tree Container (SVG goes here) -->
     <div id="tree-container" style="width:100%; height:100vh;"></div>
@@ -155,14 +151,9 @@
                 <div id="sidebar-details"></div>
             </div>
 
-            <!-- Action Buttons -->
-            <div class="sidebar-section" style="display: flex; flex-direction: column; gap: 10px;">
-
-            </div>
-
-
-
         </div>
+
+        <section id="sidebar-path" class="sidebar-path" hidden></section>
     </aside>
 
     <dialog id="admin-dialog" aria-labelledby="admin-title">

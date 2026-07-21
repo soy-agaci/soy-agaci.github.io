@@ -91,6 +91,14 @@ The local importer defaults new person revisions to `family` privacy. Choose pub
 npm run import:sheet -- --file .local/selcuk.csv --family-slug selcuk --family-name "Selçuk" --privacy public
 ```
 
+To replace local genealogy data with a normalized copy of the configured hosted
+database (approved data only; no production auth or admin records):
+
+```bash
+npm run supabase:reset -- --no-seed
+npm run reseed:local
+```
+
 Set `PRIMARY_CSV=.local/selcuk.csv` to use the ignored private capture for the required aggregate-only production parity test.
 
 For the safe hosted migration sequence, follow
@@ -98,13 +106,13 @@ For the safe hosted migration sequence, follow
 It covers source freeze, local proof, hosted Supabase, Google OAuth, admin
 bootstrap, production import, frontend cutover, smoke, and rollback points.
 
-### Starting a family from an existing person
+### Adding a family name
 
-Open a visible person and choose **Aile başlat**. Select the source family, enter the new
-family name, review or edit the suggested slug, and submit. The proposal appears only in
-**Bekleyen** mode until an active Google admin approves the whole submission. Approval
-creates a discoverable family rooted at the same canonical person ID; rejection creates no
-family or membership. There is no direct or admin-only creation shortcut.
+An unassigned visible person has **Aile adı ekle**. Choose an existing family or enter a new
+name and slug. After approval, the assignment propagates through the person's father: their
+paternal ancestors, the children of those family-line men, and descendants through sons are
+assigned together. People who already have a family assignment cannot be reassigned from
+this control. Families have no special root person.
 
 ## 📦 Deployment to GitHub Pages
 

@@ -9,6 +9,8 @@ export interface Member {
     birth_place?: string;
     death_place?: string;
     is_spouse?: boolean;
+    lineage_member?: boolean;
+    has_family?: boolean;
     gender?: 'E' | 'K' | 'U';
     gen?: number;
     persistentId?: string;

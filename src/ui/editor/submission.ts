@@ -1,11 +1,15 @@
 import {
     submitFamilyCreation,
     submitFamilyEdit,
+    submitPersonMerge,
     type FamilyCreationInput,
     type FamilyEditBundle,
     type FamilyGraph,
+    type MergedPersonFields,
     type SubmissionResult,
 } from '../../services/data/familyRepository';
+import { uuid } from '../../utils/uuid';
+import { localSupabaseUrl } from '../../services/supabase/localUrl';
 
 export type PersonFields = {
     first_name: string;
@@ -62,6 +66,11 @@ function currentPerson(graph: FamilyGraph, personId: string) {
 
 function personEdit(graph: FamilyGraph, personId: string, fields: PersonFields) {
     const current = currentPerson(graph, personId);
+    if ((current.given_name ?? '') === fields.first_name.trim()
+        && (current.family_name ?? '') === fields.last_name.trim()
+        && current.display_name === `${fields.first_name} ${fields.last_name}`.trim()
+        && (current.gender ?? '') === fields.gender
+        && (current.summary ?? '') === fields.note.trim()) return undefined;
     return compact({
         ref: personId,
         person_id: personId,
@@ -101,7 +110,23 @@ function eventFor(
 ) {
     const existing = graph.life_events.find(event => event.person_id === personRef
         && event.current_revision?.event_type === type);
-    if (!existing && !dateText && !place && !details) return undefined;
+
+    if (existing) {
+        const cur = existing.current_revision;
+        const proposedDate = dateText.trim();
+        const proposedPlace = place.trim();
+        const proposedDetails = details.trim();
+        const existingDate = cur?.date_text?.trim() ?? '';
+        const existingPlace = cur?.place_text?.trim() ?? '';
+        const existingDetails = cur?.details?.trim() ?? '';
+
+        if (proposedDate === existingDate && proposedPlace === existingPlace && proposedDetails === existingDetails) {
+            return undefined; // Skip if completely unchanged
+        }
+    } else if (!dateText && !place && !details) {
+        return undefined; // Skip if new event but all fields are empty
+    }
+
     return compact({
         ref: existing?.id ?? id(),
         event_id: existing?.id ?? '',
@@ -124,10 +149,11 @@ function events(graph: FamilyGraph, personRef: string, fields: PersonFields, id:
 
 function extras(fields: PersonFields, personRef: string): Pick<FamilyEditBundle, 'media'> {
     const mediaUrl = fields.media_url?.trim();
+    const cleanUrl = mediaUrl ? localSupabaseUrl(mediaUrl, 'https:') : undefined;
     return {
-        ...(mediaUrl ? { media: [compact({
+        ...(cleanUrl ? { media: [compact({
             person_ref: personRef,
-            url: mediaUrl,
+            url: cleanUrl,
             mime_type: 'image/jpeg',
         })] } : {}),
     };
@@ -138,7 +164,7 @@ export function mapProfileEdit(
     personId: string,
     fields: PersonFields,
     targetFamilyId?: string,
-    id: IdFactory = crypto.randomUUID.bind(crypto),
+    id: IdFactory = uuid,
 ): FamilyEditBundle {
     const partnerships = graph.partnerships.filter(partnership => partnership.current_revision
         && [partnership.person1_id, partnership.person2_id].includes(personId));
@@ -149,9 +175,11 @@ export function mapProfileEdit(
     if (partnershipChanged && (!partnership || !targetFamilyId || !partnershipEndpointsInFamily(graph, partnership.id, targetFamilyId))) {
         throw new Error('Evlilik tarihi bu hedef ailede düzenlenemiyor. Her iki kişiyi içeren aileyi seçin.');
     }
+    const person = personEdit(graph, personId, fields);
+    const eventEdits = events(graph, personId, fields, id);
     return {
-        people: [personEdit(graph, personId, fields)],
-        events: events(graph, personId, fields, id),
+        ...(person ? { people: [person] } : {}),
+        ...(eventEdits.length ? { events: eventEdits } : {}),
         ...(partnershipChanged && partnership ? { partnerships: [compact({
             ref: partnership.id,
             partnership_id: partnership.id,
@@ -173,12 +201,29 @@ export function partnershipEndpointsInFamily(graph: FamilyGraph, partnershipId: 
         membership.family_id === familyId && membership.person_id === personId && membership.current_revision));
 }
 
+export function mapFamilyJoin(
+    graph: FamilyGraph,
+    personId: string,
+    familyId: string,
+    id: IdFactory = uuid,
+): FamilyEditBundle {
+    currentPerson(graph, personId);
+    const membership = graph.memberships.find(candidate => candidate.family_id === familyId
+        && candidate.person_id === personId && candidate.current_revision);
+    return { memberships: [membership ? {
+        ref: membership.id,
+        membership_id: membership.id,
+        base_revision_id: membership.current_revision!.id,
+        person_ref: personId,
+    } : { ref: id(), person_ref: personId }] };
+}
+
 export function mapSpouseEdit(
     graph: FamilyGraph,
     selectedPersonId: string,
     fields: PersonFields,
     partnershipDate: string,
-    id: IdFactory = crypto.randomUUID.bind(crypto),
+    id: IdFactory = uuid,
 ): FamilyEditBundle {
     currentPerson(graph, selectedPersonId);
     const spouseRef = id();
@@ -203,7 +248,7 @@ export function mapChildEdit(
     child: PersonFields,
     secondParent: { personId?: string; fields?: PersonFields },
     targetFamilyId?: string,
-    id: IdFactory = crypto.randomUUID.bind(crypto),
+    id: IdFactory = uuid,
 ): FamilyEditBundle {
     currentPerson(graph, selectedParentId);
     const childRef = id();
@@ -235,6 +280,30 @@ export function mapChildEdit(
     };
 }
 
+export function mapParentEdit(
+    graph: FamilyGraph,
+    childId: string,
+    parentFields: PersonFields,
+    id: IdFactory = uuid,
+): FamilyEditBundle {
+    currentPerson(graph, childId);
+    const parentRef = id();
+    return {
+        people: [newPerson(parentRef, parentFields)],
+        events: [
+            ...events(graph, parentRef, parentFields, id),
+        ],
+        memberships: [{ ref: id(), person_ref: parentRef }],
+        parent_links: [{
+            ref: id(),
+            parent_ref: parentRef,
+            child_ref: childId,
+            relationship_type: 'biological' as const,
+        }],
+        ...extras(parentFields, parentRef),
+    };
+}
+
 const ACTOR_SECRET_KEY = 'soyagaci_anonymous_actor_secret';
 
 export function getAnonymousActorSecret(storage: Storage = localStorage): string {
@@ -260,7 +329,7 @@ export class FamilyEditSubmitter {
         if (this.inFlight) return this.inFlight;
         const fingerprint = JSON.stringify(bundle);
         if (!this.attempt || this.attempt.familyId !== familyId || this.attempt.fingerprint !== fingerprint) {
-            this.attempt = { familyId, fingerprint, requestId: crypto.randomUUID() };
+            this.attempt = { familyId, fingerprint, requestId: uuid() };
         }
         const attempt = this.attempt;
         this.inFlight = this.submit(familyId, attempt.requestId, bundle, getAnonymousActorSecret())
@@ -312,11 +381,30 @@ export class FamilyCreationSubmitter {
         if (this.inFlight) return this.inFlight;
         const fingerprint = JSON.stringify(input);
         if (!this.attempt || this.attempt.fingerprint !== fingerprint) {
-            this.attempt = { fingerprint, requestId: crypto.randomUUID() };
+            this.attempt = { fingerprint, requestId: uuid() };
         }
         const attempt = this.attempt;
         this.inFlight = this.submit(input, attempt.requestId, getAnonymousActorSecret())
             .then(result => { this.attempt = undefined; return result; })
+            .finally(() => { this.inFlight = undefined; });
+        return this.inFlight;
+    }
+}
+
+export class PersonMergeSubmitter {
+    private attempt?: { fingerprint: string; requestId: string };
+    private inFlight?: Promise<SubmissionResult>;
+
+    send(familyId: string, sourceId: string, targetId: string, fields: MergedPersonFields): Promise<SubmissionResult> {
+        if (this.inFlight) return this.inFlight;
+        const fingerprint = JSON.stringify([familyId, sourceId, targetId, fields]);
+        if (!this.attempt || this.attempt.fingerprint !== fingerprint) {
+            this.attempt = { fingerprint, requestId: uuid() };
+        }
+        const attempt = this.attempt;
+        this.inFlight = submitPersonMerge(
+            familyId, attempt.requestId, sourceId, targetId, fields, getAnonymousActorSecret(),
+        ).then(result => { this.attempt = undefined; return result; })
             .finally(() => { this.inFlight = undefined; });
         return this.inFlight;
     }

@@ -57,6 +57,7 @@ function getField(
     for (let key of keys) {
         if (input.hasOwnProperty(key)) {
             const value = input[key];
+            if (typeof value !== 'string') continue;
             if (!checkEmpty || value !== "") {
                 return value;
             }
@@ -77,6 +78,7 @@ function getFieldFromMember(
     for (let key of keys) {
         if (member.hasOwnProperty(key)) {
             const value = (member as any)[key];
+            if (typeof value !== 'string') continue;
             if (!checkEmpty || value !== "") {
                 return value;
             }

@@ -51,6 +51,12 @@ function text(value: unknown): string | null {
     return result || null;
 }
 
+export function titleCaseName(value: string | null): string | null {
+    if (!value) return null;
+    return value.toLocaleLowerCase('tr-TR').replace(/(^|[^\p{L}])(\p{L})/gu,
+        (_match, prefix: string, letter: string) => prefix + letter.toLocaleUpperCase('tr-TR'));
+}
+
 function exactDate(value: string | null): string | null {
     if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
     const date = new Date(`${value}T00:00:00Z`);
@@ -145,11 +151,11 @@ export function buildImportPayload(
         people: people.map(member => ({
             legacy_id: member.id,
             legacy_numeric_id: member.numeric_id ?? null,
-            given_name: text(member.first_name),
-            family_name: text(member.last_name),
-            display_name: text(member.name) ?? 'Unknown',
-            aliases: aliases(member),
-            gender: member.gender === 'E' ? 'male' : member.gender === 'K' ? 'female' : null,
+            given_name: titleCaseName(text(member.first_name)),
+            family_name: titleCaseName(text(member.last_name)),
+            display_name: titleCaseName(text(member.name)) ?? 'Bilinmiyor',
+            aliases: aliases(member).map(alias => titleCaseName(alias)!),
+            gender: member.gender === 'E' ? 'E' : member.gender === 'K' ? 'K' : 'U',
             is_living: text(member.death_date) ? false : null,
             summary: text(member.note),
             privacy,
@@ -173,7 +179,12 @@ export async function importFamily(
         p_family_name: familyName,
     });
     if (error) throw new Error(error.message);
-    return data as Record<string, unknown>;
+    const lineage = await client.rpc('initialize_imported_family_lineage', {
+        p_family_slug: familySlug,
+        p_root_person_legacy_id: payload.root_person_legacy_id,
+    });
+    if (lineage.error) throw new Error(lineage.error.message);
+    return { ...(data as Record<string, unknown>), lineage_members: lineage.data };
 }
 
 function parseArgs(argv: string[]): Record<string, string> {
