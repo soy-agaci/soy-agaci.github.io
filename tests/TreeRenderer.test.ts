@@ -191,6 +191,23 @@ describe('TreeRenderer', () => {
             expect(onEditClick).toHaveBeenCalledWith(node);
         });
 
+        it('opens editing on touch hold without the native context menu', () => {
+            vi.useFakeTimers();
+            renderer.transition_milliseconds = 0;
+            const node = createMockNode('mem_0');
+            renderer.draw_nodes([node], node);
+            const control = g.select<SVGGElement>('g.node-content').node()!;
+            const down = new dom.window.Event('pointerdown', { bubbles: true });
+            Object.assign(down, { pointerType: 'touch', clientX: 10, clientY: 10 });
+            control.dispatchEvent(down);
+            vi.advanceTimersByTime(600);
+            expect(onNodeDblClick).toHaveBeenCalledWith(node);
+            const menu = new dom.window.Event('contextmenu', { bubbles: true, cancelable: true });
+            control.dispatchEvent(menu);
+            expect(menu.defaultPrevented).toBe(true);
+            vi.useRealTimers();
+        });
+
         it('makes only person nodes keyboard buttons without duplicate activation', () => {
             renderer.transition_milliseconds = 0;
             const person = createMockNode('mem_0');

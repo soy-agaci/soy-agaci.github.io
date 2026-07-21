@@ -94,14 +94,14 @@
 </head>
 
 <body>
-    <!-- Global Search -->
-    <div id="search-container" style="position: fixed; top: 24px; left: 24px; z-index: 1000;">
-        <input type="text" id="global-search-input" class="glass-input" placeholder="Kişi ara..." autocomplete="off">
-        <div id="search-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: rgba(255,255,255,0.95); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-top: 4px;"></div>
-    </div>
+    <div id="top-controls">
+        <div id="search-container">
+            <input type="text" id="global-search-input" class="glass-input" placeholder="Kişi ara..." autocomplete="off">
+            <div id="search-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: rgba(255,255,255,0.95); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-top: 4px;"></div>
+        </div>
 
-    <!-- Global Patrilineal Toggle Button -->
-    <div id="tree-toolbar" style="position: fixed; top: 24px; right: 24px; z-index: 1000; display: flex; gap: 12px;">
+        <!-- Global Patrilineal Toggle Button -->
+        <div id="tree-toolbar">
         <details id="family-picker" class="toolbar-menu">
             <summary id="family-picker-label" class="glass-btn" title="Aileler">Aile</summary>
             <fieldset id="family-options"><legend>Aileler</legend></fieldset>
@@ -120,6 +120,7 @@
         <button id="patrilineal-global-toggle" class="glass-btn icon-state-btn" type="button" aria-pressed="false" title="Erkek soyu">
             <span style="font-size: 1.2em;">👔</span>
         </button>
+        </div>
     </div>
 
     <div id="app-toast" role="status" aria-live="polite" hidden></div>

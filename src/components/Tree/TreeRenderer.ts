@@ -16,6 +16,7 @@ export class TreeRenderer {
 
     private clickTimer: any = null;
     private longPressTimer: any = null;
+    private longPressStart: { x: number; y: number } | null = null;
     private suppressClick = false;
 
     constructor(
@@ -96,15 +97,27 @@ export class TreeRenderer {
             })
             .on("pointerdown", (event, node) => {
                 if (event.pointerType !== 'touch') return;
+                that.longPressStart = { x: event.clientX, y: event.clientY };
                 that.longPressTimer = setTimeout(() => {
                     that.longPressTimer = null;
+                    that.longPressStart = null;
                     that.suppressClick = true;
                     that.onNodeDblClick(node);
                 }, 600);
             })
+            .on("pointermove", event => {
+                if (!that.longPressTimer || !that.longPressStart) return;
+                if (Math.hypot(event.clientX - that.longPressStart.x, event.clientY - that.longPressStart.y) > 10) {
+                    clearTimeout(that.longPressTimer);
+                    that.longPressTimer = null;
+                    that.longPressStart = null;
+                }
+            })
             .on("pointerup pointercancel pointerleave", () => {
                 if (that.longPressTimer) { clearTimeout(that.longPressTimer); that.longPressTimer = null; }
+                that.longPressStart = null;
             })
+            .on("contextmenu", event => event.preventDefault())
             .on("keydown", (event, node) => {
                 if (!is_member(node) || event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
                 event.preventDefault();

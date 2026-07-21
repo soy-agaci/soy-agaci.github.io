@@ -49,6 +49,12 @@ body {
     cursor: pointer;
 }
 
+.node-content {
+    -webkit-touch-callout: none;
+    user-select: none;
+    touch-action: manipulation;
+}
+
 .family {
     fill: var(--primary);
     stroke: rgba(255, 255, 255, 0.5);
@@ -554,6 +560,92 @@ select.sidebar-input {
     background: rgba(255, 255, 255, 0.2);
     border-color: rgba(255, 255, 255, 0.4);
     box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.25);
+}
+
+#top-controls {
+    position: fixed;
+    z-index: 1000;
+    inset: 24px 24px auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+#search-container {
+    position: relative;
+    flex: 1 1 250px;
+    max-width: 290px;
+}
+
+#global-search-input {
+    box-sizing: border-box;
+    width: 100%;
+}
+
+#tree-toolbar {
+    display: flex;
+    gap: 12px;
+    margin-left: auto;
+}
+
+@media (max-width: 760px) {
+    #top-controls {
+        inset: 8px 8px auto;
+        gap: 4px;
+    }
+
+    #search-container {
+        min-width: 70px;
+        max-width: none;
+    }
+
+    #tree-toolbar {
+        flex: none;
+        gap: 4px;
+    }
+
+    #tree-toolbar > * {
+        flex-shrink: 0;
+    }
+
+    #tree-toolbar .glass-btn {
+        padding: 9px 8px;
+        border-radius: 12px;
+    }
+
+    #tree-toolbar .revision-toggle {
+        min-width: 60px;
+        border-radius: 12px;
+    }
+
+    #tree-toolbar .revision-toggle span {
+        padding: 6px 5px;
+    }
+
+    #family-sidebar {
+        top: 0;
+        right: -100vw;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        border-left: 0;
+        border-radius: 0;
+    }
+}
+
+@media (max-width: 360px) {
+    #top-controls {
+        flex-wrap: wrap;
+    }
+
+    #search-container {
+        flex-basis: 100%;
+    }
+
+    #tree-toolbar {
+        width: 100%;
+        justify-content: space-between;
+    }
 }
 
 /* Added controls for Supabase features; old visual language remains above. */
