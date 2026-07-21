@@ -102,6 +102,88 @@ describe('DagLayout', () => {
                 expect(isNaN(node.y)).toBe(false);
             }
         });
+
+        it('centers a small child branch around its parents in a dense generation', () => {
+            const members: Record<string, any> = {
+                root: { id: 'root', name: 'Root', gender: 'E', birth_date: '1940', is_spouse: false },
+                spouse: { id: 'spouse', name: 'Spouse', gender: 'K', birth_date: '1962', is_spouse: true },
+                kid1: { id: 'kid1', name: 'Kid 1', birth_date: '2000', is_spouse: false },
+                kid2: { id: 'kid2', name: 'Kid 2', birth_date: '2002', is_spouse: false },
+            };
+            const links: Array<[string, string]> = [['root', 'u0']];
+            for (let index = 0; index < 10; index++) {
+                const id = `child${index}`;
+                members[id] = { id, name: `Child ${index}`, birth_date: String(1960 + index), is_spouse: false };
+                links.push(['u0', id]);
+            }
+            links.push(['child0', 'u1'], ['spouse', 'u1'], ['u1', 'kid1'], ['u1', 'kid2']);
+            const dag = new DagWithFamilyData(links, members, { u1: ['child0', 'spouse'] });
+            new DagLayout(dag, [100, 100]).run();
+
+            const parentCenter = (dag.find_node('child0').x + dag.find_node('spouse').x) / 2;
+            const childCenter = (dag.find_node('kid1').x + dag.find_node('kid2').x) / 2;
+            expect(Math.abs(childCenter - parentCenter)).toBeLessThanOrEqual(100);
+            expect(dag.find_node('spouse').x - dag.find_node('child0').x).toBe(100);
+            expect(Array.from({ length: 10 }, (_, index) => dag.find_node(`child${index}`).x))
+                .toEqual([...Array.from({ length: 10 }, (_, index) => dag.find_node(`child${index}`).x)].sort((a, b) => a - b));
+        });
+
+        it('sorts siblings by age without sorting cousins against each other', () => {
+            const links: Array<[string, string]> = [
+                ['grandparent', 'grandUnion'], ['grandUnion', 'parentA'], ['grandUnion', 'parentB'],
+                ['parentA', 'zUnion'], ['zUnion', 'aYoung'], ['zUnion', 'aOld'],
+                ['parentB', 'aUnion'], ['aUnion', 'bYoung'], ['aUnion', 'bOld'],
+            ];
+            const member = (id: string, birth_date: string) => ({ id, name: id, birth_date, is_spouse: false });
+            const dag = new DagWithFamilyData(links, {
+                grandparent: member('grandparent', '1940'), parentA: member('parentA', '1960'),
+                parentB: member('parentB', '1962'), aYoung: member('aYoung', '2010'),
+                aOld: member('aOld', '2000'), bYoung: member('bYoung', '1910'), bOld: member('bOld', '1900'),
+            });
+            new DagLayout(dag, [100, 100]).run();
+
+            expect(['aOld', 'aYoung', 'bOld', 'bYoung'].map(id => dag.find_node(id).x))
+                .toEqual([...['aOld', 'aYoung', 'bOld', 'bYoung'].map(id => dag.find_node(id).x)].sort((a, b) => a - b));
+        });
+
+        it('keeps a partnered person with the larger visible sibling group', () => {
+            const links: Array<[string, string]> = [
+                ['parentA', 'familyA'], ['familyA', 'a'], ['familyA', 'a2'], ['familyA', 'a3'],
+                ['parentB', 'familyB'], ['familyB', 'b'], ['a', 'couple'], ['b', 'couple'], ['couple', 'child'],
+            ];
+            const member = (id: string, birth_date: string, is_spouse = false) =>
+                ({ id, name: id, birth_date, is_spouse });
+            const dag = new DagWithFamilyData(links, {
+                parentA: member('parentA', '1940'), parentB: member('parentB', '1941'),
+                a: member('a', '1960', true), a2: member('a2', '1962'), a3: member('a3', '1964'),
+                b: member('b', '1961'), child: member('child', '1990'),
+            }, { couple: ['a', 'b'] });
+            new DagLayout(dag, [100, 100]).run();
+
+            expect(['a', 'b', 'a2', 'a3'].map(id => dag.find_node(id).x))
+                .toEqual([...['a', 'b', 'a2', 'a3'].map(id => dag.find_node(id).x)].sort((x, y) => x - y));
+        });
+
+        it('does not let relaxation reverse child-family blocks', () => {
+            const dag = new DagWithFamilyData([
+                ['parentA', 'unionA'], ['unionA', 'childA'],
+                ['parentB', 'unionB'], ['unionB', 'childB'],
+            ], {
+                parentA: { id: 'parentA', name: 'Parent A', is_spouse: false },
+                parentB: { id: 'parentB', name: 'Parent B', is_spouse: false },
+                childA: { id: 'childA', name: 'Child A', is_spouse: false },
+                childB: { id: 'childB', name: 'Child B', is_spouse: false },
+            });
+            const layout = new DagLayout(dag, [100, 100]);
+            dag.find_node('unionA').x = 0;
+            dag.find_node('unionB').x = 100;
+            dag.find_node('childA').x = 100;
+            dag.find_node('childB').x = 0;
+
+            layout.center_generation_on_parents([dag.find_node('childA'), dag.find_node('childB')]);
+
+            expect(dag.find_node('childA').x).toBeLessThan(dag.find_node('childB').x);
+        });
     });
 
     describe('assign_generation', () => {

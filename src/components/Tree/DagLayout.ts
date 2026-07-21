@@ -178,21 +178,16 @@ export class DagLayout {
         let generations = Array.from(this.generations).sort((g_1, g_2) => {
             return g_1[0] > g_2[0] ? 1 : -1;
         });
-        let center = 0.0;
         // Iterate all generations in order to assign coordinates
-        for (let [generation_id, nodes] of generations) {
+        for (const [index, [generation_id, nodes]] of generations.entries()) {
             this.align_generation(generation_id, nodes);
-            let limits = [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
-            for (let node of nodes) {
-                limits[0] = Math.min(limits[0], node.x);
-                limits[1] = Math.max(limits[1], node.x);
+            if (index === 0) {
+                const limits = nodes.reduce(([minimum, maximum], node) =>
+                    [Math.min(minimum, node.x), Math.max(maximum, node.x)],
+                [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]);
+                const offset = -(limits[0] + limits[1]) / 2;
+                for (const node of nodes) node.x += offset;
             }
-            let new_center = (limits[0] + limits[1]) / 2.0;
-            let offset = center - new_center;
-            for (let node of nodes) {
-                node.x += offset;
-            }
-            center = new_center + offset;
         }
         // Perform a relaxation of coordinates
         let relaxation = new DagRelaxation(this.dag, this.node_size);
@@ -201,10 +196,53 @@ export class DagLayout {
                 relaxation.run(nodes);
             }
         }
+        for (const [, nodes] of generations) this.center_generation_on_parents(nodes);
+    }
+
+    center_generation_on_parents(nodes: D3Node[]) {
+        if (!nodes.length) return;
+        const desired = nodes.map(node => {
+            const parentX = this.get_average_x(this.dag.parents(node));
+            if (parentX !== undefined) return parentX;
+            const pair = Object.values(this.dag.partnershipGroups).find(ids => ids.includes(node.data));
+            if (!pair) return node.x;
+            const partners = pair.map(id => this.dag.find_node(id)).sort((a, b) => a.x - b.x);
+            const anchored = partners.find(partner => this.dag.parents(partner).length);
+            if (!anchored) return node.x;
+            const anchorX = this.get_average_x(this.dag.parents(anchored));
+            return anchorX === undefined ? node.x
+                : anchorX + (partners.indexOf(node) - partners.indexOf(anchored)) * this.node_size[0];
+        });
+        const blocks: Array<{ start: number; end: number; sum: number; count: number }> = [];
+        for (let index = 0; index < nodes.length; index++) {
+            blocks.push({ start: index, end: index, sum: desired[index] - index * this.node_size[0], count: 1 });
+            while (blocks.length > 1) {
+                const right = blocks[blocks.length - 1];
+                const left = blocks[blocks.length - 2];
+                if (left.sum / left.count <= right.sum / right.count) break;
+                blocks.splice(-2, 2, {
+                    start: left.start, end: right.end,
+                    sum: left.sum + right.sum, count: left.count + right.count,
+                });
+            }
+        }
+        for (const block of blocks) {
+            const offset = block.sum / block.count;
+            for (let index = block.start; index <= block.end; index++) {
+                nodes[index].x = offset + index * this.node_size[0];
+            }
+        }
     }
 
     align_generation(generation_id: number, nodes: D3Node[]) {
         const generationMembers = new Set(nodes.filter(is_member).map(node => node.data));
+
+        const parentKey = (node: D3Node) => this.dag.parents(node).map(parent => parent.data).sort().join('|');
+        const siblingCounts = new Map<string, number>();
+        for (const node of nodes.filter(is_member)) {
+            const key = parentKey(node);
+            if (key) siblingCounts.set(key, (siblingCounts.get(key) ?? 0) + 1);
+        }
 
         // Partnership groups come from explicit union edges, not global person roles.
         const get_primary = (n: D3Node) => {
@@ -213,39 +251,29 @@ export class DagLayout {
                 for (const union of adjacentUnions) {
                     const pair = this.dag.partnershipGroups[union.data];
                     if (pair && pair.includes(n.data) && pair.every(id => generationMembers.has(id))) {
-                        return this.dag.find_node(pair.find(id =>
-                            !this.dag.find_node(id).added_data.input?.is_spouse) ?? pair[0]);
+                        return pair.map(id => this.dag.find_node(id)).sort((a, b) =>
+                            (siblingCounts.get(parentKey(b)) ?? 0) - (siblingCounts.get(parentKey(a)) ?? 0)
+                            || Number(!!a.added_data.input?.is_spouse) - Number(!!b.added_data.input?.is_spouse)
+                            || a.data.localeCompare(b.data)
+                        )[0];
                     }
                 }
             }
             return n;
         };
 
-        // Helper to get primary parent's X coordinate
-        const get_primary_parent_x = (n: D3Node): number | undefined => {
+        const get_primary_parent_order = (n: D3Node): number | undefined => {
             const parents = this.dag.parents(n);
             if (parents.length === 0) return undefined;
-            // Parents of a member are Unions. Parents of Union are Members.
-            // If n is Member, parents are Unions.
-            // We want the X of the Union? Or X of Grandparent?
-            // Usually, Member -> Union (parent) -> Member (grandparent).
-            // But 'this.dag.parents(n)' returns the immediate parents in the DAG.
-            // In our DAG: Member -> Union -> Child.
-            // So Parent of Child is Union.
-            // Union X is usually aligned to *its* parent (Grandparent).
-            // So using Union X is correct for grouping.
-            
-            // However, if n is Union?
-            // align_generation handles nodes. Nodes can be Members or Unions.
-            // If n is Member, parent is Union.
-            // If n is Union, parent is Member.
-            
-            // We want to group based on immediate parent position.
-            return this.get_average_x(parents);
+            const orders = parents.map(parent => {
+                const generation = this.generations.get(parent.added_relations!.layout.generation_id);
+                return generation?.indexOf(parent) ?? -1;
+            }).filter(order => order >= 0);
+            return orders.length ? orders.reduce((sum, order) => sum + order, 0) / orders.length : undefined;
         };
 
         // Assign coordinates to all nodes of one generation
-        for (let pass of [1, 2, 3]) {
+        for (const pass of [1]) {
             // 1. Group nodes by Primary
             const groups = new Map<D3Node, D3Node[]>();
             for (let node of nodes) {
@@ -254,44 +282,36 @@ export class DagLayout {
                 groups.get(primary)!.push(node);
             }
 
-            // 2. Sort Primaries
-            const primaries = Array.from(groups.keys());
-            primaries.sort((a, b) => {
-                // Priority 0: Parent Grouping (Prevent crossings)
-                // Only apply if x is defined (Pass 2+) or if parents have x (Pass 1)
-                const parentX_A = get_primary_parent_x(a);
-                const parentX_B = get_primary_parent_x(b);
-                
-                if (parentX_A !== undefined && parentX_B !== undefined) {
-                    // Group by parent position
-                    if (parentX_A !== parentX_B) return parentX_A - parentX_B;
-                }
-                // If one has parent and other doesn't (unlikely in same gen), keep them apart
-                if (parentX_A !== undefined && parentX_B === undefined) return 1;
-                if (parentX_A === undefined && parentX_B !== undefined) return -1;
-
-                // Priority 1: Age (Birth Year) - Siblings
-                const ageA = (this.dag as any).get_age(a);
-                const ageB = (this.dag as any).get_age(b);
-                
-                // If both have age, compare numerically (Ascending)
-                if (ageA !== undefined && ageB !== undefined) {
-                    if (ageA !== ageB) return ageA - ageB;
-                }
-                
-                // If one has age, prioritize it (Known age comes FIRST)
-                if (ageA !== undefined && ageB === undefined) return -1;
-                if (ageA === undefined && ageB !== undefined) return 1;
-
-                // Priority 2: Name (Fallback)
-                const nameA = a.added_data.input?.name || "";
-                const nameB = b.added_data.input?.name || "";
-                const cmp = nameA.localeCompare(nameB);
-                if (cmp !== 0) return cmp;
-
-                // Priority 3: ID (Tie-breaker)
-                return a.data.localeCompare(b.data);
+            // 2. Keep siblings in contiguous family blocks; age only sorts inside a block.
+            const familyBlocks = new Map<string, D3Node[]>();
+            for (const primary of groups.keys()) {
+                const parents = parentKey(primary);
+                const key = is_member(primary) && parents ? `siblings:${parents}` : `single:${primary.data}`;
+                familyBlocks.set(key, [...(familyBlocks.get(key) ?? []), primary]);
+            }
+            const byName = (a: D3Node, b: D3Node) => {
+                const names = [a, b].map(node => node.added_data.input?.name || '');
+                return names[0].localeCompare(names[1]) || a.data.localeCompare(b.data);
+            };
+            for (const block of familyBlocks.values()) {
+                block.sort((a, b) => {
+                    const ageA = (this.dag as any).get_age(a);
+                    const ageB = (this.dag as any).get_age(b);
+                    if (ageA !== undefined && ageB !== undefined && ageA !== ageB) return ageA - ageB;
+                    if (ageA !== undefined && ageB === undefined) return -1;
+                    if (ageA === undefined && ageB !== undefined) return 1;
+                    return byName(a, b);
+                });
+            }
+            const orderedBlocks = [...familyBlocks.values()].sort((a, b) => {
+                const parentOrderA = get_primary_parent_order(a[0]);
+                const parentOrderB = get_primary_parent_order(b[0]);
+                if (parentOrderA !== undefined && parentOrderB !== undefined && parentOrderA !== parentOrderB) return parentOrderA - parentOrderB;
+                if (parentOrderA !== undefined && parentOrderB === undefined) return 1;
+                if (parentOrderA === undefined && parentOrderB !== undefined) return -1;
+                return byName(a[0], b[0]);
             });
+            const primaries = orderedBlocks.flat();
 
             // 3. Reconstruct Sorted List & Assign X
             let position = {
@@ -340,12 +360,9 @@ export class DagLayout {
                     }
                 }
             }
+            nodes.splice(0, nodes.length, ...primaries.flatMap(primary => groups.get(primary)!));
             // Pass 2 (align_partners) is implicit in our grouping logic.
         }
-
-        // Final Sort: Ensure the nodes array matches the visual order (X coordinate)
-        // This is crucial because DagRelaxation uses array order to enforce placement.
-        nodes.sort((a, b) => a.x - b.x);
     }
 
     add_to_map(object: Map<any, any>, key: any, value: any) {
