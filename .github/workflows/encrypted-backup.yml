@@ -1,0 +1,65 @@
+name: Encrypted production backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse public repositories
+        if: github.event.repository.private != true
+        run: exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download database and Storage
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKUP_STORAGE_DIR: ${{ runner.temp }}/soyagaci-backup/storage
+        run: |
+          set -euo pipefail
+          backup_dir="$RUNNER_TEMP/soyagaci-backup"
+          mkdir -p "$backup_dir"
+          git rev-parse HEAD > "$backup_dir/source-commit.txt"
+          npm exec -- supabase db dump --linked --data-only --use-copy --file "$backup_dir/database.sql"
+          node --import tsx tools/backup-remote-storage.ts
+          tar -C "$backup_dir" -czf "$RUNNER_TEMP/soyagaci-backup.tar.gz" database.sql storage source-commit.txt
+
+      - name: Encrypt backup
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          test -n "$BACKUP_PASSPHRASE"
+          archive="$RUNNER_TEMP/soyagaci-backup.tar.gz"
+          encrypted="$archive.enc"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 -in "$archive" -out "$encrypted" -pass env:BACKUP_PASSPHRASE
+          openssl dgst -sha256 -hmac "$BACKUP_PASSPHRASE" "$encrypted" > "$encrypted.hmac"
+          sha256sum "$encrypted" > "$encrypted.sha256"
+          rm -f "$archive"
+          rm -rf "$RUNNER_TEMP/soyagaci-backup"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-production-backup-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/soyagaci-backup.tar.gz.enc
+            ${{ runner.temp }}/soyagaci-backup.tar.gz.enc.hmac
+            ${{ runner.temp }}/soyagaci-backup.tar.gz.enc.sha256
+          retention-days: 90
+          if-no-files-found: error

@@ -201,7 +201,7 @@ export class Familienbaum {
         node_of_dag_all.added_data.is_visible = true;
 
         // Fallback: If nothing restored (e.g. fresh load or filtered view switch), use default view
-        if (visibleNodes.size <= 1 || restoredCount <= 1) {
+        if (restoredCount === 0) {
             // Same logic as reset_dags: Root + Spouses + Children
             const childUnions = node_of_dag_all.children ? node_of_dag_all.children() : [];
             if (childUnions) {

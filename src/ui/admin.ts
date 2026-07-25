@@ -35,6 +35,15 @@ const text = (value: unknown) => value == null || value === '' ? '—'
     : typeof value === 'boolean' ? value ? 'Evet' : 'Hayır'
         : typeof value === 'object' ? JSON.stringify(value) : String(value);
 
+function displayValue(key: string, value: unknown) {
+    if (key === 'gender' && (value === 'U' || value == null || value === '')) return '?';
+    if (typeof value !== 'string') return text(value);
+    return ({
+        birth: 'Doğum', death: 'Ölüm', occupation: 'Meslek', residence: 'İkamet', education: 'Eğitim', other: 'Diğer',
+        biological: 'Biyolojik', adoptive: 'Evlat edinme', marriage: 'Evlilik', partnership: 'Birliktelik',
+    } as Record<string, string>)[value] ?? text(value);
+}
+
 function rpcError(prefix: string, error: { message: string } | null) {
     if (!error) return;
     throw new Error(`${prefix}: ${error.message}`);
@@ -131,14 +140,14 @@ function safeLink(url: unknown) {
     } catch { return null; }
 }
 
-function valueCell(value: unknown, available = true, link = false) {
+function valueCell(value: unknown, available = true, link = false, key = '') {
     const cell = document.createElement('span');
     cell.setAttribute('role', 'cell');
     if (!available) cell.textContent = 'Yok';
     else if (link) {
         const safe = safeLink(value);
-        if (safe) cell.append(safe); else cell.textContent = text(value);
-    } else cell.textContent = text(value);
+        if (safe) cell.append(safe); else cell.textContent = displayValue(key, value);
+    } else cell.textContent = displayValue(key, value);
     return cell;
 }
 
@@ -148,8 +157,14 @@ const labels: Record<string, string> = {
     birth_date: 'Doğum tarihi', birthplace: 'Doğum yeri', death_date: 'Ölüm tarihi', death_place: 'Ölüm yeri',
     occupation: 'Meslek', summary: 'Not', certainty: 'Kesinlik',
     date_text: 'Tarih', place_text: 'Yer', details: 'Açıklama', relationship_type: 'İlişki',
-    partnership_type: 'İlişki türü', status_text: 'Durum', url: 'Bağlantı', caption: 'Açıklama',
+    event_type: 'Olay türü', partnership_type: 'İlişki türü', status_text: 'Durum', url: 'Bağlantı', caption: 'Açıklama',
 };
+
+const hiddenRevisionFields = new Set([
+    'id', 'status', 'created_at', 'base_revision_id', 'reviewed_at', 'reviewed_by', 'submission_id',
+    'person_id', 'partner_id', 'family_id', 'parent_id', 'child_id', 'event_id', 'life_event_id',
+    'partnership_id', 'parent_link_id', 'family_membership_id', 'revoked_at', 'revoked_by', 'creator_id',
+]);
 
 function row(label: string, base: JsonObject | null, current: JsonObject | null, proposed: JsonObject) {
     const item = document.createElement('div');
@@ -160,9 +175,9 @@ function row(label: string, base: JsonObject | null, current: JsonObject | null,
     name.setAttribute('role', 'rowheader');
     item.append(
         name,
-        valueCell(base?.[label], base !== null, label === 'url'),
-        valueCell(current?.[label], current !== null, label === 'url'),
-        valueCell(proposed[label], true, label === 'url'),
+        valueCell(base?.[label], base !== null, label === 'url', label),
+        valueCell(current?.[label], current !== null, label === 'url', label),
+        valueCell(proposed[label], true, label === 'url', label),
     );
     return item;
 }
@@ -190,14 +205,9 @@ function renderRevision(group: string, entry: RevisionEntry): HTMLElement | null
     const keys = new Set([...Object.keys(base ?? {}), ...Object.keys(current ?? {}), ...Object.keys(proposed)]);
     let rowCount = 0;
     for (const key of keys) {
-        if ([
-            'id', 'status', 'created_at', 'base_revision_id',
-            'reviewed_at', 'reviewed_by', 'submission_id',
-            'person_id', 'partner_id', 'family_id', 'parent_id',
-            'revoked_at', 'revoked_by', 'creator_id'
-        ].includes(key)) continue;
+        if (hiddenRevisionFields.has(key) || !(key in labels)) continue;
         if (JSON.stringify(base?.[key]) !== JSON.stringify(proposed[key])
-            || JSON.stringify(current?.[key]) !== JSON.stringify(proposed[key])) {
+            && !(base === null && (proposed[key] == null || proposed[key] === ''))) {
             table.append(row(key, base, current, proposed));
             rowCount++;
         }
@@ -236,10 +246,11 @@ function photo(value: JsonObject | null, old: boolean) {
 
 function renderPerson(entry: RevisionEntry) {
     const section = document.createElement('section'); section.className = 'admin-person-change';
-    const old = entry.current ?? entry.base;
+    const old = entry.base ?? entry.current;
+    const currentName = entry.current ?? entry.base;
     const title = document.createElement('h3'); title.textContent = 'Kişi değişikliği'; section.append(title);
     const names = document.createElement('div'); names.className = 'admin-name-change';
-    const oldNameStr = personName(old);
+    const oldNameStr = personName(currentName);
     const newNameStr = personName(entry.proposed);
     if (oldNameStr === newNameStr) {
         const nameNode = document.createElement('span');
@@ -257,7 +268,7 @@ function renderPerson(entry: RevisionEntry) {
         if (JSON.stringify(old?.[key]) === JSON.stringify(entry.proposed[key])) continue;
         const line = document.createElement('div'); line.append(document.createElement('span'));
         line.firstChild!.textContent = labels[key] ?? key;
-        line.append(valueCell(old?.[key], old !== null), valueCell(entry.proposed[key])); fields.append(line);
+        line.append(valueCell(old?.[key], old !== null, false, key), valueCell(entry.proposed[key], true, false, key)); fields.append(line);
     }
     if (fields.childElementCount) section.append(fields);
     return section;

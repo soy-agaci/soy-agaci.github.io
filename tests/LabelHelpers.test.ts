@@ -129,7 +129,7 @@ describe('LabelHelpers', () => {
 
         // Places should appear with symbols
         const placeLineExists = lines.some(line =>
-            line.includes('*') || line.includes('†')
+            line.includes('◦') || line.includes('●')
         );
         expect(placeLineExists).toBe(true);
     });
@@ -159,7 +159,7 @@ describe('LabelHelpers', () => {
 
         // Should combine birth and death place with *† symbol
         const combinedPlaceExists = lines.some(line =>
-            line.includes('*†') && line.includes('Boston')
+            line.includes('◦●') && line.includes('Boston')
         );
         expect(combinedPlaceExists).toBe(true);
     });

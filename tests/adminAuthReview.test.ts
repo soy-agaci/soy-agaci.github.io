@@ -75,6 +75,27 @@ describe('Google admin auth and review UI', () => {
         expect(container.querySelector('img')?.src).toBe('https://example.invalid/old.jpg');
     });
 
+    it('renders only Turkish, changed review fields and hides revision metadata', () => {
+        const container = document.createElement('div');
+        renderAdminDetail(container, {
+            ...detail, family_creation: null, people: [{
+                base: { display_name: 'Sahide Ağıralioğlu', gender: 'U', id: 'old' },
+                current: { display_name: 'Sahide Ağıralioğlu', gender: 'U', id: 'current' },
+                proposed: { display_name: 'Sahide Pamuk', gender: 'K', id: 'new', submission_id: 'secret' },
+            }],
+            events: [{ base: null, current: null, proposed: {
+                life_event_id: 'secret', event_type: 'death', place_text: 'Çaykara', date_text: null,
+            } }], memberships: [{ base: null, current: null, proposed: { family_membership_id: 'secret' } }],
+            sources: [],
+        } as any);
+        expect(container.textContent).toContain('?');
+        expect(container.textContent).toContain('K');
+        expect(container.textContent).toContain('Ölüm');
+        expect(container.textContent).not.toContain('life_event_id');
+        expect(container.textContent).not.toContain('family_membership_id');
+        expect(container.textContent).not.toContain('secret');
+    });
+
     it('renders a pending person merge for approval', () => {
         const container = document.createElement('div');
         renderAdminDetail(container, {

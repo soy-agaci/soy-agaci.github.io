@@ -449,6 +449,13 @@ async function init() {
         const nextData = familyGraphToFamilyData(graph, includePending ? '*' : undefined);
         const selectedId = familienbaum?.data.start ?? store.getState().selectedNodeId;
         if (selectedId && nextData.members[selectedId]) nextData.start = selectedId;
+        if (savedVisibleNodes) {
+            savedVisibleNodes = new Set([...savedVisibleNodes].filter(id => id in nextData.members));
+            if (savedVisibleNodes.size === 0) {
+                savedVisibleNodes = null;
+                savedTransform = null;
+            }
+        }
         store.setData(nextData);
         buildIdMaps(nextData);
         renderTree();

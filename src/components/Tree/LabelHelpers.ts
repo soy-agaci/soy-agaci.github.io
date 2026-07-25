@@ -67,9 +67,9 @@ export function set_multiline(d3_element: d3.Selection<SVGGElement, D3Node, any,
         }
         let text = "";
         if (birth_and_death_place != "")
-            text += (text != "" ? " " : "") + "*† " + birth_and_death_place;
-        if (birth_place != "") text += (text != "" ? " " : "") + "* " + birth_place;
-        if (death_place != "") text += (text != "" ? " " : "") + "† " + death_place;
+            text += (text != "" ? " " : "") + "◦● " + birth_and_death_place;
+        if (birth_place != "") text += (text != "" ? " " : "") + "◦ " + birth_place;
+        if (death_place != "") text += (text != "" ? " " : "") + "● " + death_place;
         if (marriage != "") text += (text != "" ? " " : "") + "⚭ " + marriage;
         return text;
     }
