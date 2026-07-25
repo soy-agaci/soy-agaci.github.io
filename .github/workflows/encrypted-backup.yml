@@ -32,6 +32,8 @@ jobs:
           backup_dir="$RUNNER_TEMP/soyagaci-backup"
           mkdir -p "$backup_dir"
           git rev-parse HEAD > "$backup_dir/source-commit.txt"
+          project_ref="$(node -e 'console.log(new URL(process.env.SUPABASE_URL).hostname.split(".")[0])')"
+          npm exec -- supabase link --project-ref "$project_ref"
           npm exec -- supabase db dump --linked --data-only --use-copy --file "$backup_dir/database.sql"
           node --import tsx tools/backup-remote-storage.ts
           tar -C "$backup_dir" -czf "$RUNNER_TEMP/soyagaci-backup.tar.gz" database.sql storage source-commit.txt
