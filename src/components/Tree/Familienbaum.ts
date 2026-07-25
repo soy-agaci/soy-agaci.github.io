@@ -254,6 +254,13 @@ export class Familienbaum {
     click(current_node_id: string) {
         const node = this.dag_all.find_node(current_node_id);
         if (!is_member(node)) return;
+        if (this.hasPartner(node) && this.viewAnchorId !== current_node_id
+            && this.showParentsWithoutCollapsing(node)) {
+            this.viewAnchorId = current_node_id;
+            this.viewMode = -1;
+            this.draw(true, node.data, false);
+            return;
+        }
         const currentVisible = this.visibleNodeIds();
         const firstMode = this.viewAnchorId === current_node_id ? (this.viewMode + 1) % 5 : 0;
         let candidate = firstMode;
@@ -303,6 +310,25 @@ export class Familienbaum {
             for (const spouse of this.dag_all.parents(union)) spouse.added_data.is_visible = true;
             for (const child of union.children ? union.children() : []) child.added_data.is_visible = true;
         }
+    }
+
+    private showParentsWithoutCollapsing(node: D3Node): boolean {
+        const unions = this.dag_all.parents(node);
+        let found = false;
+        for (const union of unions) {
+            const parents = this.dag_all.parents(union);
+            if (!parents.some(is_member)) continue;
+            found = true;
+            union.added_data.is_visible = true;
+            node.added_data.is_visible = true;
+            for (const parent of parents) parent.added_data.is_visible = true;
+        }
+        return found;
+    }
+
+    private hasPartner(node: D3Node): boolean {
+        return (node.children?.() ?? []).some(union =>
+            this.dag_all.parents(union).some(parent => is_member(parent) && parent.data !== node.data));
     }
 
     private showAllDescendants(node: D3Node) {

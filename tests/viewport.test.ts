@@ -117,6 +117,30 @@ describe('tree viewport', () => {
         expect(dag.find_node('maternalGrandfather').added_data.is_visible).toBe(false);
     });
 
+    it('reveals a spouse’s parents without collapsing the first click', () => {
+        const dag = dag_with_family_data([
+            ['self', 'couple'], ['spouse', 'couple'], ['couple', 'child'],
+            ['father', 'spouseParents'], ['mother', 'spouseParents'], ['spouseParents', 'spouse'],
+        ], {
+            self: { id: 'self', is_spouse: false }, spouse: { id: 'spouse', is_spouse: false },
+            child: { id: 'child', is_spouse: false }, father: { id: 'father', is_spouse: false },
+            mother: { id: 'mother', is_spouse: false },
+        });
+        for (const id of ['self', 'spouse', 'couple', 'child']) dag.find_node(id).added_data.is_visible = true;
+        const tree = Object.create(Familienbaum.prototype) as any;
+        tree.dag_all = dag;
+        tree.viewAnchorId = 'self';
+        tree.viewMode = 0;
+        tree.draw = vi.fn();
+
+        tree.click('spouse');
+
+        for (const id of ['self', 'spouse', 'couple', 'child', 'father', 'mother', 'spouseParents']) {
+            expect(dag.find_node(id).added_data.is_visible).toBe(true);
+        }
+        expect(tree.viewMode).toBe(-1);
+    });
+
     it('restores the union nodes needed by an in-page shared URL', () => {
         const dag = dag_with_family_data([
             ['father', 'parents'], ['mother', 'parents'], ['parents', 'self'],
