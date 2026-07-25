@@ -12,10 +12,6 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Refuse public repositories
-        if: github.event.repository.private != true
-        run: exit 1
-
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
