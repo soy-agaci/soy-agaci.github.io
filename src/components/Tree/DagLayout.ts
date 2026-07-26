@@ -303,6 +303,12 @@ export class DagLayout {
                     return byName(a, b);
                 });
             }
+            const spouseSide = new Map<D3Node, 'left' | 'right'>();
+            for (const block of familyBlocks.values()) {
+                if (block.length < 2) continue;
+                spouseSide.set(block[0], 'left');
+                spouseSide.set(block[block.length - 1], 'right');
+            }
             const orderedBlocks = [...familyBlocks.values()].sort((a, b) => {
                 const parentOrderA = get_primary_parent_order(a[0]);
                 const parentOrderB = get_primary_parent_order(b[0]);
@@ -322,8 +328,11 @@ export class DagLayout {
             for (let p of primaries) {
                 const group = groups.get(p)!;
                 
-                // Ensure Primary is first in group, spouses follow
+                // Keep siblings on the inside of their family block and spouses outside.
                 group.sort((x, y) => {
+                    const side = spouseSide.get(p);
+                    if (side && x === p) return side === 'left' ? 1 : -1;
+                    if (side && y === p) return side === 'left' ? -1 : 1;
                     const xParents = this.dag.parents(x);
                     const yParents = this.dag.parents(y);
                     if (xParents.length && yParents.length) {

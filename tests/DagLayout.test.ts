@@ -123,7 +123,7 @@ describe('DagLayout', () => {
             const parentCenter = (dag.find_node('child0').x + dag.find_node('spouse').x) / 2;
             const childCenter = (dag.find_node('kid1').x + dag.find_node('kid2').x) / 2;
             expect(Math.abs(childCenter - parentCenter)).toBeLessThanOrEqual(100);
-            expect(dag.find_node('spouse').x - dag.find_node('child0').x).toBe(100);
+            expect(dag.find_node('spouse').x - dag.find_node('child0').x).toBe(-100);
             expect(Array.from({ length: 10 }, (_, index) => dag.find_node(`child${index}`).x))
                 .toEqual([...Array.from({ length: 10 }, (_, index) => dag.find_node(`child${index}`).x)].sort((a, b) => a - b));
         });
@@ -160,8 +160,33 @@ describe('DagLayout', () => {
             }, { couple: ['a', 'b'] });
             new DagLayout(dag, [100, 100]).run();
 
-            expect(['a', 'b', 'a2', 'a3'].map(id => dag.find_node(id).x))
-                .toEqual([...['a', 'b', 'a2', 'a3'].map(id => dag.find_node(id).x)].sort((x, y) => x - y));
+            expect(['b', 'a', 'a2', 'a3'].map(id => dag.find_node(id).x))
+                .toEqual([...['b', 'a', 'a2', 'a3'].map(id => dag.find_node(id).x)].sort((x, y) => x - y));
+        });
+
+        it('keeps siblings inside and their spouses outside', () => {
+            const links: Array<[string, string]> = [
+                ['parent', 'family'], ['family', 'older'], ['family', 'younger'],
+                ['older', 'olderCouple'], ['olderSpouse', 'olderCouple'], ['olderCouple', 'olderChild'],
+                ['younger', 'youngerCouple'], ['youngerSpouse', 'youngerCouple'], ['youngerCouple', 'youngerChild'],
+            ];
+            const member = (id: string, birth_date: string, is_spouse = false) =>
+                ({ id, name: id, birth_date, is_spouse });
+            const dag = new DagWithFamilyData(links, {
+                parent: member('parent', '1940'),
+                older: member('older', '1960'), olderSpouse: member('olderSpouse', '1961', true),
+                younger: member('younger', '1962'), youngerSpouse: member('youngerSpouse', '1963', true),
+                olderChild: member('olderChild', '1990'), youngerChild: member('youngerChild', '1992'),
+            }, {
+                olderCouple: ['older', 'olderSpouse'],
+                youngerCouple: ['younger', 'youngerSpouse'],
+            });
+
+            new DagLayout(dag, [100, 100]).run();
+
+            const order = ['olderSpouse', 'older', 'younger', 'youngerSpouse'];
+            expect(order.map(id => dag.find_node(id).x))
+                .toEqual([...order.map(id => dag.find_node(id).x)].sort((a, b) => a - b));
         });
 
         it('does not let relaxation reverse child-family blocks', () => {
