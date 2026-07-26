@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(23);
+select plan(24);
 
 select ok(
   (select count(*) from (
@@ -363,6 +363,45 @@ begin
 end;
 $$;
 select pass('revision deletes are rejected');
+
+insert into public.people (id) values
+  ('90000000-0000-4000-8000-000000000020'),
+  ('90000000-0000-4000-8000-000000000021'),
+  ('90000000-0000-4000-8000-000000000022');
+insert into public.parent_links (id, parent_id, child_id) values (
+  '90000000-0000-4000-8000-000000000023',
+  '90000000-0000-4000-8000-000000000020',
+  '90000000-0000-4000-8000-000000000022'
+);
+insert into public.parent_link_revisions (
+  id, parent_link_id, status, parent_id, child_id, relationship_type
+) values (
+  '90000000-0000-4000-8000-000000000024',
+  '90000000-0000-4000-8000-000000000023',
+  'approved',
+  '90000000-0000-4000-8000-000000000020',
+  '90000000-0000-4000-8000-000000000022',
+  'biological'
+);
+update public.parent_links
+set current_revision_id = '90000000-0000-4000-8000-000000000024'
+where id = '90000000-0000-4000-8000-000000000023';
+select public.unify_person(
+  '90000000-0000-4000-8000-000000000020',
+  '90000000-0000-4000-8000-000000000021'
+);
+select ok(
+  exists (
+    select 1
+    from public.parent_links link
+    join public.parent_link_revisions revision on revision.id = link.current_revision_id
+    where link.id = '90000000-0000-4000-8000-000000000023'
+      and link.parent_id = '90000000-0000-4000-8000-000000000021'
+      and revision.parent_id = link.parent_id
+      and revision.child_id = link.child_id
+  ),
+  'person merge preserves source-as-parent links'
+);
 
 do $$
 begin
