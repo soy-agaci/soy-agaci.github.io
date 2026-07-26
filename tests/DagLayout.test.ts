@@ -189,6 +189,28 @@ describe('DagLayout', () => {
                 .toEqual([...order.map(id => dag.find_node(id).x)].sort((a, b) => a - b));
         });
 
+        it('pulls earlier generations toward reordered descendants', () => {
+            const links: Array<[string, string]> = [
+                ['root', 'family'], ['family', 'older'], ['family', 'younger'],
+                ['dursun', 'dursunFamily'], ['dursunFamily', 'partner'],
+                ['younger', 'couple'], ['partner', 'couple'], ['couple', 'child'],
+            ];
+            const member = (id: string, name: string, birth_date: string, is_spouse = false) =>
+                ({ id, name, birth_date, is_spouse });
+            const dag = new DagWithFamilyData(links, {
+                dursun: member('dursun', 'A', '1940'),
+                root: member('root', 'Z', '1940'),
+                older: member('older', 'Older', '1960'),
+                younger: member('younger', 'Younger', '1962'),
+                partner: member('partner', 'Partner', '1961', true),
+                child: member('child', 'Child', '1990'),
+            }, { couple: ['younger', 'partner'] });
+
+            new DagLayout(dag, [100, 100]).run();
+
+            expect(dag.find_node('root').x).toBeLessThan(dag.find_node('dursun').x);
+        });
+
         it('does not let relaxation reverse child-family blocks', () => {
             const dag = new DagWithFamilyData([
                 ['parentA', 'unionA'], ['unionA', 'childA'],

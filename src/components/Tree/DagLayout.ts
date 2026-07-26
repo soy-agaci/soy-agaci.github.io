@@ -179,16 +179,18 @@ export class DagLayout {
             return g_1[0] > g_2[0] ? 1 : -1;
         });
         // Iterate all generations in order to assign coordinates
-        for (const [index, [generation_id, nodes]] of generations.entries()) {
+        for (const [generation_id, nodes] of generations) {
             this.align_generation(generation_id, nodes);
-            if (index === 0) {
-                const limits = nodes.reduce(([minimum, maximum], node) =>
-                    [Math.min(minimum, node.x), Math.max(maximum, node.x)],
-                [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]);
-                const offset = -(limits[0] + limits[1]) / 2;
-                for (const node of nodes) node.x += offset;
-            }
         }
+        for (const [generation_id, nodes] of [...generations].reverse()) {
+            this.align_generation(generation_id, nodes, true);
+        }
+        const firstGeneration = generations[0]?.[1] ?? [];
+        const limits = firstGeneration.reduce(([minimum, maximum], node) =>
+            [Math.min(minimum, node.x), Math.max(maximum, node.x)],
+        [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]);
+        const offset = -(limits[0] + limits[1]) / 2;
+        for (const node of firstGeneration) node.x += offset;
         // Perform a relaxation of coordinates
         let relaxation = new DagRelaxation(this.dag, this.node_size);
         for (let _pass = 0; _pass < LAYOUT_CONSTANTS.RELAXATION_PASSES; _pass++) {
@@ -234,7 +236,7 @@ export class DagLayout {
         }
     }
 
-    align_generation(generation_id: number, nodes: D3Node[]) {
+    align_generation(generation_id: number, nodes: D3Node[], preferChildren = false) {
         const generationMembers = new Set(nodes.filter(is_member).map(node => node.data));
 
         const parentKey = (node: D3Node) => this.dag.parents(node).map(parent => parent.data).sort().join('|');
@@ -281,6 +283,13 @@ export class DagLayout {
                 if (!groups.has(primary)) groups.set(primary, []);
                 groups.get(primary)!.push(node);
             }
+            const get_primary_child_order = (n: D3Node): number | undefined => {
+                const orders = groups.get(n)!.flatMap(node => node.children!()).map(child => {
+                    const generation = this.generations.get(child.added_relations!.layout.generation_id);
+                    return generation?.indexOf(child) ?? -1;
+                }).filter(order => order >= 0);
+                return orders.length ? orders.reduce((sum, order) => sum + order, 0) / orders.length : undefined;
+            };
 
             // 2. Keep siblings in contiguous family blocks; age only sorts inside a block.
             const familyBlocks = new Map<string, D3Node[]>();
@@ -310,6 +319,11 @@ export class DagLayout {
                 spouseSide.set(block[block.length - 1], 'right');
             }
             const orderedBlocks = [...familyBlocks.values()].sort((a, b) => {
+                const childOrderA = get_primary_child_order(a[0]);
+                const childOrderB = get_primary_child_order(b[0]);
+                if (preferChildren && childOrderA !== undefined && childOrderB !== undefined && childOrderA !== childOrderB) {
+                    return childOrderA - childOrderB;
+                }
                 const parentOrderA = get_primary_parent_order(a[0]);
                 const parentOrderB = get_primary_parent_order(b[0]);
                 if (parentOrderA !== undefined && parentOrderB !== undefined && parentOrderA !== parentOrderB) return parentOrderA - parentOrderB;
