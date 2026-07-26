@@ -1,5 +1,4 @@
 import { DagWithFamilyData, get_year_of_birth_date, is_member } from './dagWithFamilyData';
-import { get_roots } from './dagWithRelations';
 import { DagRelaxation } from './dagRelaxation';
 import { D3Node } from '../../types/types';
 import { LAYOUT_CONSTANTS } from '../../constants/layout';
@@ -26,68 +25,65 @@ export class DagLayout {
     }
 
     assign_generation() {
-        // Add generation ID to node, and add the node to the map
-        let add_generation = (node: D3Node, generation_id: number, is_partner: boolean) => {
-            let layout = node.added_relations!.layout;
-            let added = this.add_to_object(layout, "generation_id", generation_id);
-            if (added) {
-                this.add_to_map(this.generations, generation_id, new Array());
-                let generation = this.generations.get(generation_id)!;
-                if (is_partner) {
-                    let child = node.children!()[0];
-                    if (child !== undefined) {
-                        let elems = this.dag.parents(child);
-                        let partner = elems[+(elems[0] == node)];
-                        generation.splice(generation.indexOf(partner) + 1, 0, node);
-                    } else {
-                        generation.push(node);
-                    }
-                } else {
-                    generation.push(node);
-                }
-            }
-            return added;
+        const members = this.dag.nodes().filter(is_member);
+        const component = new Map(members.map(node => [node.data, node.data]));
+        const find = (id: string): string => {
+            const parent = component.get(id)!;
+            if (parent !== id) component.set(id, find(parent));
+            return component.get(id)!;
         };
-        // Determine generation using an advancing front approach
-        for (let starting_node of get_roots(this.dag)) {
-            add_generation(starting_node, 0, false);
-            let border = [starting_node];
-            while (border.length > 0) {
-                let next: D3Node[] = [];
-                for (let node of border) {
-                    let generation_id = node.added_relations!.layout.generation_id;
-                    for (let parent of this.dag.parents(node)) {
-                        let gp = this.dag.parents(parent);
-                        if (add_generation(parent, generation_id - 1, gp.length === 0)) {
-                            next.push(parent);
-                        }
-                    }
-                    for (let child of node.children!()) {
-                        if (add_generation(child, generation_id + 1, false)) {
-                            next.push(child);
-                        }
-                    }
-                }
-                border = next;
-            }
-        }
-
         const visibleNodes = new Set(this.dag.nodes().map(node => node.data));
         for (const pair of Object.values(this.dag.partnershipGroups)) {
             if (!pair.every(id => visibleNodes.has(id))) continue;
-            const partners = pair.map(id => this.dag.find_node(id));
-            const primary = partners.find(node => !node.added_data.input?.is_spouse);
-            if (!primary) continue;
-            const targetGeneration = primary.added_relations!.layout.generation_id;
-            for (const spouse of partners.filter(node => node.added_data.input?.is_spouse)) {
-                const layout = spouse.added_relations!.layout;
-                if (layout.generation_id === targetGeneration) continue;
-                const previous = this.generations.get(layout.generation_id)!;
-                previous.splice(previous.indexOf(spouse), 1);
-                layout.generation_id = targetGeneration;
-                const generation = this.generations.get(targetGeneration)!;
-                generation.splice(generation.indexOf(primary) + 1, 0, spouse);
+            const left = find(pair[0]);
+            const right = find(pair[1]);
+            if (left !== right) component.set(right, left);
+        }
+
+        const componentParents = new Map<string, Set<string>>();
+        for (const node of this.dag.nodes().filter(node => !is_member(node))) {
+            const parents = this.dag.parents(node).filter(is_member);
+            const children = node.children!().filter(is_member);
+            for (const parent of parents) {
+                for (const child of children) {
+                    const parentComponent = find(parent.data);
+                    const childComponent = find(child.data);
+                    if (parentComponent === childComponent) continue;
+                    const parentsOfChild = componentParents.get(childComponent) ?? new Set<string>();
+                    parentsOfChild.add(parentComponent);
+                    componentParents.set(childComponent, parentsOfChild);
+                }
             }
+        }
+
+        const componentGenerations = new Map<string, number>();
+        const visiting = new Set<string>();
+        const getGeneration = (id: string): number => {
+            id = find(id);
+            if (componentGenerations.has(id)) return componentGenerations.get(id)!;
+            if (visiting.has(id)) return 0;
+            visiting.add(id);
+            const generation = Math.max(-1, ...[...(componentParents.get(id) ?? [])].map(getGeneration)) + 1;
+            visiting.delete(id);
+            componentGenerations.set(id, generation);
+            return generation;
+        };
+        for (const member of members) getGeneration(member.data);
+
+        for (const node of this.dag.nodes()) {
+            let generation: number;
+            if (is_member(node)) {
+                generation = getGeneration(node.data) * 2;
+            } else {
+                const parents = this.dag.parents(node).filter(is_member);
+                const children = node.children!().filter(is_member);
+                if (parents.length) generation = Math.max(...parents.map(parent => getGeneration(parent.data) * 2)) + 1;
+                else if (children.length) generation = Math.min(...children.map(child => getGeneration(child.data) * 2)) - 1;
+                else generation = 0;
+            }
+            node.added_relations!.layout.generation_id = generation;
+            if (!this.generations.has(generation)) this.generations.set(generation, []);
+            this.generations.get(generation)!.push(node);
         }
     }
 
@@ -319,13 +315,15 @@ export class DagLayout {
                 spouseSide.set(block[block.length - 1], 'right');
             }
             const orderedBlocks = [...familyBlocks.values()].sort((a, b) => {
-                const childOrderA = get_primary_child_order(a[0]);
-                const childOrderB = get_primary_child_order(b[0]);
-                if (preferChildren && childOrderA !== undefined && childOrderB !== undefined && childOrderA !== childOrderB) {
-                    return childOrderA - childOrderB;
-                }
                 const parentOrderA = get_primary_parent_order(a[0]);
                 const parentOrderB = get_primary_parent_order(b[0]);
+                const childOrderA = get_primary_child_order(a[0]);
+                const childOrderB = get_primary_child_order(b[0]);
+                if (preferChildren && (!is_member(a[0]) || !is_member(b[0])
+                    || parentOrderA === undefined || parentOrderB === undefined)
+                    && childOrderA !== undefined && childOrderB !== undefined && childOrderA !== childOrderB) {
+                    return childOrderA - childOrderB;
+                }
                 if (parentOrderA !== undefined && parentOrderB !== undefined && parentOrderA !== parentOrderB) return parentOrderA - parentOrderB;
                 if (parentOrderA !== undefined && parentOrderB === undefined) return 1;
                 if (parentOrderA === undefined && parentOrderB !== undefined) return -1;

@@ -264,6 +264,38 @@ describe('DagLayout', () => {
                 expect(nodes.length).toBeGreaterThan(0);
             }
         });
+
+        it('aligns partners after deriving generations from both parent lines', () => {
+            const dag = new DagWithFamilyData([
+                ['dursun', 'husbandParents'], ['husbandParents', 'husband'],
+                ['motherParent', 'motherParents'], ['motherParents', 'mother'],
+                ['husband', 'parentsCouple'], ['mother', 'parentsCouple'], ['parentsCouple', 'daughter'],
+                ['resit', 'davutParents'], ['davutParents', 'davut'],
+                ['daughter', 'childCouple'], ['davut', 'childCouple'], ['childCouple', 'child'],
+            ], {
+                dursun: { id: 'dursun', name: 'Dursun' },
+                husband: { id: 'husband', name: 'Husband' },
+                motherParent: { id: 'motherParent', name: 'Mother Parent' },
+                mother: { id: 'mother', name: 'Mother' },
+                daughter: { id: 'daughter', name: 'Daughter' },
+                resit: { id: 'resit', name: 'Resit' },
+                davut: { id: 'davut', name: 'Davut' },
+                child: { id: 'child', name: 'Child' },
+            }, {
+                parentsCouple: ['husband', 'mother'],
+                childCouple: ['daughter', 'davut'],
+            });
+            const layout = new DagLayout(dag, [100, 100]);
+
+            layout.add_object_to_nodes('added_relations.layout');
+            layout.assign_generation();
+
+            const generation = (id: string) => dag.find_node(id).added_relations!.layout.generation_id;
+            expect(generation('husband')).toBe(generation('mother'));
+            expect(generation('daughter')).toBe(generation('davut'));
+            expect(generation('daughter')).toBe(generation('mother') + 2);
+            expect(generation('davut')).toBeGreaterThan(generation('resit'));
+        });
     });
 
     describe('assign_ages', () => {
